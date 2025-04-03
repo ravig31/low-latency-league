@@ -12,7 +12,7 @@ test: tests.cpp
 submit: engine.cpp
 	$(CXX) $(CXXFLAGS) -fPIC -c engine.cpp -o engine.o
 	$(CXX) $(CXXFLAGS) -shared -o engine.so engine.o
-	lll-bench $(MAKEFILE_DIR)engine.so -d 2
+	lll-bench $(MAKEFILE_DIR)engine.so -d 1
 
 clean:
 	rm -f tests engine.o engine.so
