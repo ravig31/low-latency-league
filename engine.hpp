@@ -1,9 +1,7 @@
 #pragma once
 
 #include <cstdint>
-#include <list>
-#include <map>
-#include <utility>
+#include <deque>
 #include <vector>
 
 enum class Side : uint8_t
@@ -15,7 +13,7 @@ enum class Side : uint8_t
 using IdType = uint32_t;
 using PriceType = uint16_t;
 using QuantityType = uint16_t;
-using VolumeType = uint64_t;
+using VolumeType = uint32_t;
 
 // You CANNOT change this
 struct Order
@@ -25,12 +23,33 @@ struct Order
 	QuantityType quantity;
 	Side side;
 };
+// // You CAN and SHOULD change this
+// struct Orderbook {
+//     // Sell Side
+//     std::vector<PriceType> sellPrices;
+//     std::vector<VolumeType> sellVolumes;
+//     std::vector<std::deque<Order>> sellOrderLists; 
+
+//     // Buy Side
+//     std::vector<PriceType> buyPrices;
+//     std::vector<VolumeType> buyVolumes;
+//     std::vector<std::deque<Order>> buyOrderLists; 
+
+//     Orderbook(size_t initialCapacity = 1024) :
+//         sellPrices(initialCapacity),
+//         sellVolumes(initialCapacity),
+//         sellOrderLists(initialCapacity),
+//         buyPrices(initialCapacity),
+//         buyVolumes(initialCapacity),
+//         buyOrderLists(initialCapacity)
+//     {}
+// };
 
 // You CAN and SHOULD change this
 struct Orderbook
 {
-	std::vector<std::pair<PriceType, std::vector<Order>>> buyOrders;
-	std::vector<std::pair<PriceType, std::vector<Order>>> sellOrders;
+	std::vector<std::pair<PriceType, std::pair<VolumeType, std::deque<Order>>>> buyOrders;
+	std::vector<std::pair<PriceType, std::pair<VolumeType, std::deque<Order>>>> sellOrders;
 };
 
 extern "C"
@@ -45,7 +64,7 @@ extern "C"
 	void modify_order_by_id(Orderbook& orderbook, IdType order_id, QuantityType new_quantity);
 
 	// Returns total resting volume at a given price point
-	uint32_t get_volume_at_level(Orderbook& orderbook, Side side, PriceType quantity);
+	uint32_t get_volume_at_level(Orderbook& orderbook, Side side, PriceType price);
 
 	// Performance of these do not matter. They are only used to check correctness
 	Order lookup_order_by_id(Orderbook& orderbook, IdType order_id);

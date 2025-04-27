@@ -12,46 +12,56 @@
 // The Condition predicate takes the price level and the incoming order price
 // and returns whether the level qualifies.
 
-
-
-template <typename OrderMap, typename Condition>
-void add_order(Order& order, OrderMap& ordersMap, Condition cond){
-	auto it = std::find_if(ordersMap.begin(), ordersMap.end(),
-			[&order, &cond](const auto& p) { return cond(p.first, order.price); });
-
-	if (it == ordersMap.end()){
-		ordersMap.insert(it, {order.price, std::vector<Order>{order}});
-	} else {
-		it->second.push_back(order);
+template <typename OrderList, typename Condition>
+void add_order(Order& order, OrderList& ordersList, Condition cond)
+{
+	if (ordersList.empty())
+	{
+		ordersList.push_back({ order.price, { order.quantity, std::deque<Order>{ order } } });
+		return;
 	}
-	
+
+	auto rit = ordersList.rbegin();
+	while (rit != ordersList.rend() && cond(order.price, rit->first))
+	{
+		++rit;
+	}
+
+	if (rit != ordersList.rend() && rit->first == order.price)
+	{
+		rit->second.second.push_back(order);
+		rit->second.first += order.quantity;
+	}
+	else
+	{
+		ordersList.insert(
+			rit.base(),
+			{ order.price, { order.quantity, std::deque<Order>{ order } } }
+		);
+	}
 }
 
-template <typename OrderMap, typename Condition>
-uint32_t process_orders(Order& order, OrderMap& ordersMap, Condition cond)
+template <typename OrderList, typename Condition>
+uint32_t process_orders(Order& order, OrderList& ordersList, Condition cond)
 {
 	uint32_t matchCount = 0;
-	auto it = ordersMap.begin();
-	while (it != ordersMap.end() && order.quantity > 0 &&
-		   (it->first == order.price || cond(it->first, order.price)))
+	auto it = ordersList.rbegin();
+	while (it != ordersList.rend() && order.quantity > 0 &&
+		   (it->first == order.price || cond(order.price, it->first)))
 	{
-		auto& ordersAtPrice = it->second;
-		for (auto orderIt = ordersAtPrice.begin();
-			 orderIt != ordersAtPrice.end() && order.quantity > 0;)
+		auto& ordersAtLevel = it->second.second;
+		while (!ordersAtLevel.empty() && order.quantity > 0)
 		{
-			QuantityType trade = std::min(order.quantity, orderIt->quantity);
+			QuantityType trade = std::min(order.quantity, ordersAtLevel.front().quantity);
 			order.quantity -= trade;
-			orderIt->quantity -= trade;
+			ordersAtLevel.front().quantity -= trade;
+			it->second.first -= trade; // Decrement total volume at level
+			if (ordersAtLevel.front().quantity == 0)
+				ordersAtLevel.pop_front();
 			++matchCount;
-			if (orderIt->quantity == 0)
-				orderIt = ordersAtPrice.erase(orderIt);
-			else
-				++orderIt;
 		}
-		if (ordersAtPrice.empty())
-			it = ordersMap.erase(it);
-		else
-			++it;
+		it = ordersAtLevel.empty() ? std::make_reverse_iterator(ordersList.erase(--it.base()))
+								   : it++;
 	}
 	return matchCount;
 }
@@ -60,53 +70,52 @@ uint32_t match_order(Orderbook& orderbook, const Order& incoming)
 {
 	uint32_t matchCount = 0;
 	Order order = incoming; // Create a copy to modify the quantity
-	
+
 	if (order.side == Side::BUY)
 	{
 		// For a BUY, match with sell orders priced at or below the order's price.
-		matchCount = process_orders(order, orderbook.sellOrders, std::less<>());
+		matchCount = process_orders(order, orderbook.sellOrders, std::greater<>());
 		if (order.quantity > 0)
-			add_order(order, orderbook.buyOrders, std::less<>());
+			add_order(order, orderbook.buyOrders, std::less<PriceType>());
 	}
 	else
 	{ // Side::SELL
 		// For a SELL, match with buy orders priced at or above the order's price.
-		matchCount = process_orders(order, orderbook.buyOrders, std::greater<>());
+		matchCount = process_orders(order, orderbook.buyOrders, std::less<>());
 		if (order.quantity > 0)
-			add_order(order, orderbook.sellOrders, std::less<>());
-		
+			add_order(order, orderbook.sellOrders, std::greater<PriceType>());
 	}
 	return matchCount;
 }
 
 // Templated helper to cancel an order within a given orders map.
-template <typename OrderMap>
-bool modify_order_in_map(OrderMap& ordersMap, IdType order_id, QuantityType new_quantity)
+template <typename OrderList>
+bool modify_order_in_map(OrderList& ordersList, IdType order_id, QuantityType new_quantity)
 {
-	for (auto it = ordersMap.begin(); it != ordersMap.end();)
+	for (auto it = ordersList.begin(); it != ordersList.end();)
 	{
-		auto& orderList = it->second;
-		for (auto orderIt = orderList.begin(); orderIt != orderList.end();)
+		auto& ordersAtLevel = it->second.second;
+		auto& volumeAtLevel = it->second.first;
+		for (auto orderIt = ordersAtLevel.begin(); orderIt != ordersAtLevel.end();)
 		{
 			if (orderIt->id == order_id)
 			{
+				QuantityType prevQuantity = orderIt->quantity;
+
 				if (new_quantity == 0)
-					orderIt = orderList.erase(orderIt);
-				else
 				{
-					orderIt->quantity = new_quantity;
-					return true;
+					orderIt = ordersAtLevel.erase(orderIt);
+					volumeAtLevel -= prevQuantity;
+					break;
 				}
+
+				orderIt->quantity = new_quantity;
+				volumeAtLevel += (new_quantity - prevQuantity);
+				return true;
 			}
-			else
-			{
-				++orderIt;
-			}
+			++orderIt;
 		}
-		if (orderList.empty())
-			it = ordersMap.erase(it);
-		else
-			++it;
+		it = ordersAtLevel.empty() ? ordersList.erase(it) : ++it;
 	}
 	return false;
 }
@@ -119,50 +128,46 @@ void modify_order_by_id(Orderbook& orderbook, IdType order_id, QuantityType new_
 		return;
 }
 
-template <typename OrderMap>
-std::optional<Order> lookup_order_in_map(OrderMap& ordersMap, IdType order_id)
+template <typename OrderList>
+std::optional<Order> lookup_order_in_map(OrderList& ordersList, IdType order_id)
 {
-	for (const auto& [price, orderList] : ordersMap)
+	for (auto it = ordersList.begin(); it != ordersList.end();)
 	{
-		for (const auto& order : orderList)
+		auto& ordersAtLevel = it->second.second;
+		for (auto orderIt = ordersAtLevel.begin(); orderIt != ordersAtLevel.end();)
 		{
-			if (order.id == order_id)
-			{
-				return order;
-			}
+			if (orderIt->id == order_id)
+				return *orderIt;
+			++orderIt;
 		}
+		++it;
 	}
 	return std::nullopt;
 }
 
-uint32_t get_volume_at_level(Orderbook& orderbook, Side side, PriceType quantity)
+uint32_t get_volume_at_level(Orderbook& orderbook, Side side, PriceType price)
 {
-	uint32_t total = 0;
-	// if (side == Side::BUY)
-	// {
-	// 	auto buy_orders = orderbook.buyOrders.find(quantity);
-	// 	if (buy_orders == orderbook.buyOrders.end())
-	// 	{
-	// 		return 0;
-	// 	}
-	// 	for (const auto& order : buy_orders->second)
-	// 	{
-	// 		total += order.quantity;
-	// 	}
-	// }
-	// else if (side == Side::SELL)
-	// {
-	// 	auto sell_orders = orderbook.sellOrders.find(quantity);
-	// 	if (sell_orders == orderbook.sellOrders.end())
-	// 	{
-	// 		return 0;
-	// 	}
-	// 	for (const auto& order : sell_orders->second)
-	// 	{
-	// 		total += order.quantity;
-	// 	}
-	// }
-	return total;
+	if (side == Side::BUY)
+	{
+		auto it = std::find_if(
+			orderbook.buyOrders.begin(),
+			orderbook.buyOrders.end(),
+			[price](const auto& p) { return p.first == price; }
+		);
+		return it != orderbook.buyOrders.end() ? it->second.first
+											   : 0; 
+	}
+	else if (side == Side::SELL)
+	{
+		auto it = std::find_if(
+			orderbook.sellOrders.begin(),
+			orderbook.sellOrders.end(),
+			[price](const auto& p) { return p.first == price; }
+		);
+		return it != orderbook.sellOrders.end() ? it->second.first
+												: 0;
+	}
+	return 0;
 }
 
 // Functions below here don't need to be performant. Just make sure they're
