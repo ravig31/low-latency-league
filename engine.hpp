@@ -23,34 +23,45 @@ struct Order
 	QuantityType quantity;
 	Side side;
 };
-// // You CAN and SHOULD change this
-// struct Orderbook {
-//     // Sell Side
-//     std::vector<PriceType> sellPrices;
-//     std::vector<VolumeType> sellVolumes;
-//     std::vector<std::deque<Order>> sellOrderLists; 
 
-//     // Buy Side
-//     std::vector<PriceType> buyPrices;
-//     std::vector<VolumeType> buyVolumes;
-//     std::vector<std::deque<Order>> buyOrderLists; 
+constexpr uint16_t MAX_LEVELS = 1024;
 
-//     Orderbook(size_t initialCapacity = 1024) :
-//         sellPrices(initialCapacity),
-//         sellVolumes(initialCapacity),
-//         sellOrderLists(initialCapacity),
-//         buyPrices(initialCapacity),
-//         buyVolumes(initialCapacity),
-//         buyOrderLists(initialCapacity)
-//     {}
+// struct PriceLevel{
+// 	PriceType price;
+// 	VolumeType volume = 0;
+// 	std::vector<Order> orders;
 // };
 
 // You CAN and SHOULD change this
 struct Orderbook
 {
-	std::vector<std::pair<PriceType, std::pair<VolumeType, std::deque<Order>>>> buyOrders;
-	std::vector<std::pair<PriceType, std::pair<VolumeType, std::deque<Order>>>> sellOrders;
+	// Sell Side
+	std::vector<PriceType> sellPrices;
+	std::vector<VolumeType> sellVolumes;
+	std::vector<std::deque<Order>> sellOrders;
+
+	// Buy Side
+	std::vector<PriceType> buyPrices;
+	std::vector<VolumeType> buyVolumes;
+	std::vector<std::deque<Order>> buyOrders;
+
+	Orderbook(size_t initialCapacity = 1024)
+	{
+		sellPrices.reserve(initialCapacity);
+		sellVolumes.reserve(initialCapacity);
+		sellOrders.reserve(initialCapacity);
+		buyPrices.reserve(initialCapacity);
+		buyVolumes.reserve(initialCapacity);
+		buyOrders.reserve(initialCapacity);
+	}
 };
+
+// // You CAN and SHOULD change this
+// struct Orderbook
+// {
+// 	std::vector<std::pair<PriceType, std::pair<VolumeType, std::deque<Order>>>> buyOrders;
+// 	std::vector<std::pair<PriceType, std::pair<VolumeType, std::deque<Order>>>> sellOrders;
+// };
 
 extern "C"
 {

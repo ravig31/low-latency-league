@@ -1,8 +1,12 @@
 #include "engine.hpp"
 #include <algorithm>
+#include <cstddef>
+#include <deque>
 #include <functional>
+#include <iterator>
 #include <optional>
 #include <stdexcept>
+#include <vector>
 
 // This is an example correct implementation
 // It is INTENTIONALLY suboptimal
@@ -12,56 +16,79 @@
 // The Condition predicate takes the price level and the incoming order price
 // and returns whether the level qualifies.
 
-template <typename OrderList, typename Condition>
-void add_order(Order& order, OrderList& ordersList, Condition cond)
+template <typename Condition>
+void add_order(
+	Order& order,
+	std::vector<PriceType>& prices,
+	std::vector<VolumeType>& volumes,
+	std::vector<std::deque<Order>>& orders,
+	Condition cond
+)
 {
-	if (ordersList.empty())
+	if (prices.empty())
 	{
-		ordersList.push_back({ order.price, { order.quantity, std::deque<Order>{ order } } });
+		prices.push_back(order.price);
+		volumes.push_back(order.quantity);
+		orders.push_back({ order });
 		return;
 	}
 
-	auto rit = ordersList.rbegin();
-	while (rit != ordersList.rend() && cond(order.price, rit->first))
+	auto rit = prices.rbegin();
+	while (rit != prices.rend() && cond(order.price, *rit))
 	{
 		++rit;
 	}
 
-	if (rit != ordersList.rend() && rit->first == order.price)
+
+	size_t index;
+	if (rit != prices.rend() && *rit == order.price)
 	{
-		rit->second.second.push_back(order);
-		rit->second.first += order.quantity;
+		index = std::distance(prices.begin(), rit.base()) - 1;
+		orders[index].push_back(order);
+		volumes[index] += order.quantity;
 	}
 	else
 	{
-		ordersList.insert(
-			rit.base(),
-			{ order.price, { order.quantity, std::deque<Order>{ order } } }
-		);
+        index = std::distance(prices.begin(), rit.base());
+        
+        prices.insert(rit.base(), order.price);
+        volumes.insert(volumes.begin() + index, order.quantity);
+        orders.insert(orders.begin() + index, std::deque<Order>{ order });
 	}
 }
 
-template <typename OrderList, typename Condition>
-uint32_t process_orders(Order& order, OrderList& ordersList, Condition cond)
+template <typename Condition>
+uint32_t process_orders(
+	Order& order,
+	std::vector<PriceType>& prices,
+	std::vector<VolumeType>& volumes,
+	std::vector<std::deque<Order>>& orders,
+	Condition cond
+)
 {
 	uint32_t matchCount = 0;
-	auto it = ordersList.rbegin();
-	while (it != ordersList.rend() && order.quantity > 0 &&
-		   (it->first == order.price || cond(order.price, it->first)))
+	auto rit = prices.rbegin();
+	while (rit != prices.rend() && order.quantity > 0 &&
+		   (*rit == order.price || cond(order.price, *rit)))
 	{
-		auto& ordersAtLevel = it->second.second;
+		size_t index = std::distance(prices.begin(), rit.base()) - 1;
+		auto& ordersAtLevel = orders[index];
 		while (!ordersAtLevel.empty() && order.quantity > 0)
 		{
 			QuantityType trade = std::min(order.quantity, ordersAtLevel.front().quantity);
 			order.quantity -= trade;
 			ordersAtLevel.front().quantity -= trade;
-			it->second.first -= trade; // Decrement total volume at level
+			volumes[index] -= trade; // Decrement total volume at level
 			if (ordersAtLevel.front().quantity == 0)
 				ordersAtLevel.pop_front();
 			++matchCount;
 		}
-		it = ordersAtLevel.empty() ? std::make_reverse_iterator(ordersList.erase(--it.base()))
-								   : it++;
+		if (ordersAtLevel.empty())
+		{
+			volumes.erase(volumes.begin() + index);
+			orders.erase(orders.begin() + index);
+			rit = std::make_reverse_iterator(prices.erase(--rit.base()));
+		}
 	}
 	return matchCount;
 }
@@ -74,28 +101,57 @@ uint32_t match_order(Orderbook& orderbook, const Order& incoming)
 	if (order.side == Side::BUY)
 	{
 		// For a BUY, match with sell orders priced at or below the order's price.
-		matchCount = process_orders(order, orderbook.sellOrders, std::greater<>());
+		matchCount = process_orders(
+			order,
+			orderbook.sellPrices,
+			orderbook.sellVolumes,
+			orderbook.sellOrders,
+			std::greater<PriceType>()
+		);
 		if (order.quantity > 0)
-			add_order(order, orderbook.buyOrders, std::less<PriceType>());
+			add_order(
+				order,
+				orderbook.buyPrices,
+				orderbook.buyVolumes,
+				orderbook.buyOrders,
+				std::less<PriceType>()
+			);
 	}
 	else
 	{ // Side::SELL
 		// For a SELL, match with buy orders priced at or above the order's price.
-		matchCount = process_orders(order, orderbook.buyOrders, std::less<>());
+		matchCount = process_orders(
+			order,
+			orderbook.buyPrices,
+			orderbook.buyVolumes,
+			orderbook.buyOrders,
+			std::less<PriceType>()
+		);
 		if (order.quantity > 0)
-			add_order(order, orderbook.sellOrders, std::greater<PriceType>());
+			add_order(
+				order,
+				orderbook.sellPrices,
+				orderbook.sellVolumes,
+				orderbook.sellOrders,
+				std::greater<PriceType>()
+			);
 	}
 	return matchCount;
 }
 
 // Templated helper to cancel an order within a given orders map.
-template <typename OrderList>
-bool modify_order_in_map(OrderList& ordersList, IdType order_id, QuantityType new_quantity)
+bool modify_order(
+	std::vector<PriceType>& prices,
+	std::vector<VolumeType>& volumes,
+	std::vector<std::deque<Order>>& orders,
+	IdType order_id,
+	QuantityType new_quantity
+)
 {
-	for (auto it = ordersList.begin(); it != ordersList.end();)
+	for (auto it = orders.begin(); it != orders.end();)
 	{
-		auto& ordersAtLevel = it->second.second;
-		auto& volumeAtLevel = it->second.first;
+		auto& ordersAtLevel = *it;
+		size_t index = std::distance(orders.begin(), it);
 		for (auto orderIt = ordersAtLevel.begin(); orderIt != ordersAtLevel.end();)
 		{
 			if (orderIt->id == order_id)
@@ -105,35 +161,55 @@ bool modify_order_in_map(OrderList& ordersList, IdType order_id, QuantityType ne
 				if (new_quantity == 0)
 				{
 					orderIt = ordersAtLevel.erase(orderIt);
-					volumeAtLevel -= prevQuantity;
+					volumes[index] -= prevQuantity;
 					break;
 				}
 
 				orderIt->quantity = new_quantity;
-				volumeAtLevel += (new_quantity - prevQuantity);
+				volumes[index] += (new_quantity - prevQuantity);
 				return true;
 			}
 			++orderIt;
 		}
-		it = ordersAtLevel.empty() ? ordersList.erase(it) : ++it;
+		if (ordersAtLevel.empty())
+		{
+			volumes.erase(volumes.begin() + index);
+			prices.erase(prices.begin() + index);
+			it = orders.erase(it);
+		}
+		else
+		{
+			++it;
+		}
 	}
 	return false;
 }
 
 void modify_order_by_id(Orderbook& orderbook, IdType order_id, QuantityType new_quantity)
 {
-	if (modify_order_in_map(orderbook.buyOrders, order_id, new_quantity))
+	if (modify_order(
+			orderbook.buyPrices,
+			orderbook.buyVolumes,
+			orderbook.buyOrders,
+			order_id,
+			new_quantity
+		))
 		return;
-	if (modify_order_in_map(orderbook.sellOrders, order_id, new_quantity))
+	if (modify_order(
+			orderbook.sellPrices,
+			orderbook.sellVolumes,
+			orderbook.sellOrders,
+			order_id,
+			new_quantity
+		))
 		return;
 }
 
-template <typename OrderList>
-std::optional<Order> lookup_order_in_map(OrderList& ordersList, IdType order_id)
+std::optional<Order> lookup_order(std::vector<std::deque<Order>>& orders, IdType order_id)
 {
-	for (auto it = ordersList.begin(); it != ordersList.end();)
+	for (auto it = orders.begin(); it != orders.end();)
 	{
-		auto& ordersAtLevel = it->second.second;
+		auto& ordersAtLevel = *it;
 		for (auto orderIt = ordersAtLevel.begin(); orderIt != ordersAtLevel.end();)
 		{
 			if (orderIt->id == order_id)
@@ -150,22 +226,24 @@ uint32_t get_volume_at_level(Orderbook& orderbook, Side side, PriceType price)
 	if (side == Side::BUY)
 	{
 		auto it = std::find_if(
-			orderbook.buyOrders.begin(),
-			orderbook.buyOrders.end(),
-			[price](const auto& p) { return p.first == price; }
+			orderbook.buyPrices.begin(),
+			orderbook.buyPrices.end(),
+			[price](const auto p) { return p == price; }
 		);
-		return it != orderbook.buyOrders.end() ? it->second.first
-											   : 0; 
+		return it != orderbook.buyPrices.end()
+			? orderbook.buyVolumes[std::distance(orderbook.buyPrices.begin(), it)]
+			: 0;
 	}
 	else if (side == Side::SELL)
 	{
 		auto it = std::find_if(
-			orderbook.sellOrders.begin(),
-			orderbook.sellOrders.end(),
-			[price](const auto& p) { return p.first == price; }
+			orderbook.sellPrices.begin(),
+			orderbook.sellPrices.end(),
+			[price](const auto p) { return p == price; }
 		);
-		return it != orderbook.sellOrders.end() ? it->second.first
-												: 0;
+		return it != orderbook.sellPrices.end()
+			? orderbook.sellVolumes[std::distance(orderbook.sellPrices.begin(), it)]
+			: 0;
 	}
 	return 0;
 }
@@ -174,8 +252,8 @@ uint32_t get_volume_at_level(Orderbook& orderbook, Side side, PriceType price)
 // correct
 Order lookup_order_by_id(Orderbook& orderbook, IdType order_id)
 {
-	auto order1 = lookup_order_in_map(orderbook.buyOrders, order_id);
-	auto order2 = lookup_order_in_map(orderbook.sellOrders, order_id);
+	auto order1 = lookup_order(orderbook.buyOrders, order_id);
+	auto order2 = lookup_order(orderbook.sellOrders, order_id);
 	if (order1.has_value())
 		return *order1;
 	if (order2.has_value())
@@ -185,8 +263,8 @@ Order lookup_order_by_id(Orderbook& orderbook, IdType order_id)
 
 bool order_exists(Orderbook& orderbook, IdType order_id)
 {
-	auto order1 = lookup_order_in_map(orderbook.buyOrders, order_id);
-	auto order2 = lookup_order_in_map(orderbook.sellOrders, order_id);
+	auto order1 = lookup_order(orderbook.buyOrders, order_id);
+	auto order2 = lookup_order(orderbook.sellOrders, order_id);
 	return (order1.has_value() || order2.has_value());
 }
 

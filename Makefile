@@ -5,7 +5,7 @@ MAKEFILE_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 all: test
 
 script: script.cpp
-	$(CXX) $(CXXFLAGS) -g -o script script.cpp engine.cpp
+	$(CXX) -std=c++17 -Wall -Wextra -g -o script script.cpp engine.cpp
 
 	
 test: tests.cpp
