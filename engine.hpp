@@ -1,8 +1,8 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
-#include <deque>
-#include <vector>
+#include <optional>
 
 enum class Side : uint8_t
 {
@@ -13,7 +13,6 @@ enum class Side : uint8_t
 using IdType = uint32_t;
 using PriceType = uint16_t;
 using QuantityType = uint16_t;
-using VolumeType = uint32_t;
 
 // You CANNOT change this
 struct Order
@@ -24,43 +23,31 @@ struct Order
 	Side side;
 };
 
-constexpr uint16_t MAX_LEVELS = 1024;
+constexpr uint16_t MAX_ORDERS = 10'000;
+constexpr uint16_t MAX_ORDERS_PER_LEVEL = 496;
+constexpr uint16_t MAX_PRICE = 4400;
 
-// struct PriceLevel{
-// 	PriceType price;
-// 	VolumeType volume = 0;
-// 	std::vector<Order> orders;
-// };
+struct PriceLevel
+{
+	uint32_t volume = 0;
+	uint16_t count = 0;
+	std::array<IdType, MAX_ORDERS_PER_LEVEL> orders;
+};
 
 // You CAN and SHOULD change this
-struct Orderbook
-{
-	// Sell Side
-	std::vector<PriceType> sellPrices;
-	std::vector<VolumeType> sellVolumes;
-	std::vector<std::deque<Order>> sellOrders;
+struct Orderbook {
+    std::array<PriceLevel, MAX_PRICE> buyLevels;
+    std::array<PriceLevel, MAX_PRICE> sellLevels;
+    std::array<std::optional<Order>, MAX_ORDERS> orders;
 
-	// Buy Side
-	std::vector<PriceType> buyPrices;
-	std::vector<VolumeType> buyVolumes;
-	std::vector<std::deque<Order>> buyOrders;
-
-	Orderbook(size_t initialCapacity = 1024)
-	{
-		sellPrices.reserve(initialCapacity);
-		sellVolumes.reserve(initialCapacity);
-		sellOrders.reserve(initialCapacity);
-		buyPrices.reserve(initialCapacity);
-		buyVolumes.reserve(initialCapacity);
-		buyOrders.reserve(initialCapacity);
-	}
+    Orderbook() : buyLevels{}, sellLevels{} {} 
 };
 
 // // You CAN and SHOULD change this
 // struct Orderbook
 // {
-// 	std::vector<std::pair<PriceType, std::pair<VolumeType, std::deque<Order>>>> buyOrders;
-// 	std::vector<std::pair<PriceType, std::pair<VolumeType, std::deque<Order>>>> sellOrders;
+// 	std::vector<std::pair<PriceType, std::pair<VolumeType, std::deque<Order>>>> buyLevels;
+// 	std::vector<std::pair<PriceType, std::pair<VolumeType, std::deque<Order>>>> sellLevels;
 // };
 
 extern "C"

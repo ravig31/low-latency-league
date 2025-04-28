@@ -1,12 +1,9 @@
 #include "engine.hpp"
 #include <algorithm>
-#include <cstddef>
-#include <deque>
+#include <cstdint>
 #include <functional>
-#include <iterator>
 #include <optional>
 #include <stdexcept>
-#include <vector>
 
 // This is an example correct implementation
 // It is INTENTIONALLY suboptimal
@@ -16,80 +13,104 @@
 // The Condition predicate takes the price level and the incoming order price
 // and returns whether the level qualifies.
 
-template <typename Condition>
-void add_order(
-	Order& order,
-	std::vector<PriceType>& prices,
-	std::vector<VolumeType>& volumes,
-	std::vector<std::deque<Order>>& orders,
-	Condition cond
-)
+inline void add_order_to_level(PriceLevel& level, IdType order_id, QuantityType quantity)
 {
-	if (prices.empty())
+	if (level.count < MAX_ORDERS_PER_LEVEL)
 	{
-		prices.push_back(order.price);
-		volumes.push_back(order.quantity);
-		orders.push_back({ order });
-		return;
-	}
-
-	auto rit = prices.rbegin();
-	while (rit != prices.rend() && cond(order.price, *rit))
-	{
-		++rit;
-	}
-
-
-	size_t index;
-	if (rit != prices.rend() && *rit == order.price)
-	{
-		index = std::distance(prices.begin(), rit.base()) - 1;
-		orders[index].push_back(order);
-		volumes[index] += order.quantity;
+		// Find first free slot and use it
+		for (size_t i = 0; i < MAX_ORDERS_PER_LEVEL; i++)
+		{
+			if (level.orders[i] == 0) // Assuming 0 is invalid order ID
+			{
+				level.orders[i] = order_id;
+				level.volume += quantity;
+				level.count++;
+				break;
+			}
+		}
 	}
 	else
 	{
-        index = std::distance(prices.begin(), rit.base());
-        
-        prices.insert(rit.base(), order.price);
-        volumes.insert(volumes.begin() + index, order.quantity);
-        orders.insert(orders.begin() + index, std::deque<Order>{ order });
+		throw std::runtime_error("level full");
 	}
 }
 
-template <typename Condition>
-uint32_t process_orders(
-	Order& order,
-	std::vector<PriceType>& prices,
-	std::vector<VolumeType>& volumes,
-	std::vector<std::deque<Order>>& orders,
-	Condition cond
-)
+inline void remove_order_from_level(PriceLevel& level, IdType order_id)
 {
-	uint32_t matchCount = 0;
-	auto rit = prices.rbegin();
-	while (rit != prices.rend() && order.quantity > 0 &&
-		   (*rit == order.price || cond(order.price, *rit)))
+	for (size_t i = 0; i < MAX_ORDERS_PER_LEVEL; i++)
 	{
-		size_t index = std::distance(prices.begin(), rit.base()) - 1;
-		auto& ordersAtLevel = orders[index];
-		while (!ordersAtLevel.empty() && order.quantity > 0)
+		if (level.orders[i] == order_id)
 		{
-			QuantityType trade = std::min(order.quantity, ordersAtLevel.front().quantity);
-			order.quantity -= trade;
-			ordersAtLevel.front().quantity -= trade;
-			volumes[index] -= trade; // Decrement total volume at level
-			if (ordersAtLevel.front().quantity == 0)
-				ordersAtLevel.pop_front();
-			++matchCount;
-		}
-		if (ordersAtLevel.empty())
-		{
-			volumes.erase(volumes.begin() + index);
-			orders.erase(orders.begin() + index);
-			rit = std::make_reverse_iterator(prices.erase(--rit.base()));
+			level.orders[i] = 0;
+			level.count--;
+			break;
 		}
 	}
+}
+
+inline void compact_price_level(PriceLevel& level)
+{
+	uint16_t writeIdx = 0;
+
+	for (uint16_t readIdx = 0; readIdx < level.count; ++readIdx)
+	{
+		if (level.orders[readIdx] != 0)
+		{
+			if (writeIdx != readIdx)
+			{
+				level.orders[writeIdx] = level.orders[readIdx];
+			}
+			++writeIdx;
+		}
+	}
+
+	level.count = writeIdx;
+}
+
+template <typename Levels, typename Orders, typename Condition>
+uint32_t process_orders(Order& order, Orders& orders, Levels& levels, Condition cond)
+{
+	uint32_t matchCount = 0;
+
+	for (PriceType i = 0; i < MAX_PRICE && order.quantity > 0; ++i)
+	{
+
+		PriceType price = (order.side == Side::BUY) ? i : (MAX_PRICE - 1 - i);
+		auto& level = levels[price];
+
+		if (level.volume == 0)
+			continue;
+
+		// Check if this price matches our condition
+		if (!(price == order.price || cond(order.price, price)))
+			break;
+
+		for (uint16_t i = 0; i < level.count && order.quantity > 0; ++i)
+		{
+			auto& matchingOrder = orders[level.orders[i]];
+
+			if (!matchingOrder)
+				continue;
+
+			QuantityType trade = std::min(order.quantity, matchingOrder->quantity);
+			order.quantity -= trade;
+			matchingOrder->quantity -= trade;
+			level.volume -= trade;
+			++matchCount;
+
+			if (matchingOrder->quantity == 0)
+			{
+				matchingOrder = std::nullopt;
+			}
+		}
+
+		// Compact the level by removing filled orders if needed
+		if (matchCount > 0)
+		{
+			compact_price_level(level);
+		}
+	}
+
 	return matchCount;
 }
 
@@ -98,152 +119,109 @@ uint32_t match_order(Orderbook& orderbook, const Order& incoming)
 	uint32_t matchCount = 0;
 	Order order = incoming; // Create a copy to modify the quantity
 
+	if (incoming.id > MAX_ORDERS)
+	{
+		throw std::runtime_error("order out of bounds");
+	}
+
+	if (incoming.price > MAX_PRICE)
+	{
+		throw std::runtime_error("price out of bounds");
+	}
+
 	if (order.side == Side::BUY)
 	{
 		// For a BUY, match with sell orders priced at or below the order's price.
 		matchCount = process_orders(
 			order,
-			orderbook.sellPrices,
-			orderbook.sellVolumes,
-			orderbook.sellOrders,
+			orderbook.orders,
+			orderbook.sellLevels,
 			std::greater<PriceType>()
 		);
 		if (order.quantity > 0)
-			add_order(
-				order,
-				orderbook.buyPrices,
-				orderbook.buyVolumes,
-				orderbook.buyOrders,
-				std::less<PriceType>()
-			);
+		{
+			orderbook.orders[order.id] = order;
+			auto& level = orderbook.buyLevels[order.price];
+			add_order_to_level(level, order.id, order.quantity);
+		}
 	}
 	else
 	{ // Side::SELL
 		// For a SELL, match with buy orders priced at or above the order's price.
-		matchCount = process_orders(
-			order,
-			orderbook.buyPrices,
-			orderbook.buyVolumes,
-			orderbook.buyOrders,
-			std::less<PriceType>()
-		);
+		matchCount =
+			process_orders(order, orderbook.orders, orderbook.buyLevels, std::less<PriceType>());
 		if (order.quantity > 0)
-			add_order(
-				order,
-				orderbook.sellPrices,
-				orderbook.sellVolumes,
-				orderbook.sellOrders,
-				std::greater<PriceType>()
-			);
+		{
+			orderbook.orders[order.id] = order;
+			auto& level = orderbook.sellLevels[order.price];
+			add_order_to_level(level, order.id, order.quantity);
+		}
 	}
 	return matchCount;
 }
 
 // Templated helper to cancel an order within a given orders map.
-bool modify_order(
-	std::vector<PriceType>& prices,
-	std::vector<VolumeType>& volumes,
-	std::vector<std::deque<Order>>& orders,
-	IdType order_id,
-	QuantityType new_quantity
-)
+template <typename Levels>
+bool modify_order(Order& order, Levels& levels, IdType order_id, QuantityType new_quantity)
 {
-	for (auto it = orders.begin(); it != orders.end();)
+	PriceType price = order.price;
+
+	// Update volume at price level
+	auto& level = levels[price];
+	level.volume += (new_quantity - order.quantity);
+
+	if (new_quantity != 0)
 	{
-		auto& ordersAtLevel = *it;
-		size_t index = std::distance(orders.begin(), it);
-		for (auto orderIt = ordersAtLevel.begin(); orderIt != ordersAtLevel.end();)
-		{
-			if (orderIt->id == order_id)
-			{
-				QuantityType prevQuantity = orderIt->quantity;
-
-				if (new_quantity == 0)
-				{
-					orderIt = ordersAtLevel.erase(orderIt);
-					volumes[index] -= prevQuantity;
-					break;
-				}
-
-				orderIt->quantity = new_quantity;
-				volumes[index] += (new_quantity - prevQuantity);
-				return true;
-			}
-			++orderIt;
-		}
-		if (ordersAtLevel.empty())
-		{
-			volumes.erase(volumes.begin() + index);
-			prices.erase(prices.begin() + index);
-			it = orders.erase(it);
-		}
-		else
-		{
-			++it;
-		}
+		// Update order quantity
+		order.quantity = new_quantity;
+		return true;
 	}
-	return false;
+	else
+	{
+		auto& orders_at_level = level.orders;
+
+		for (size_t i = 0; i < MAX_ORDERS_PER_LEVEL; i++)
+		{
+			if (orders_at_level[i] == order_id)
+			{
+				orders_at_level[i] = 0;
+				break;
+			}
+		}
+		return true;
+	}
 }
 
 void modify_order_by_id(Orderbook& orderbook, IdType order_id, QuantityType new_quantity)
 {
-	if (modify_order(
-			orderbook.buyPrices,
-			orderbook.buyVolumes,
-			orderbook.buyOrders,
-			order_id,
-			new_quantity
-		))
+	auto& maybeOrder = orderbook.orders[order_id];
+	if (!maybeOrder)
 		return;
-	if (modify_order(
-			orderbook.sellPrices,
-			orderbook.sellVolumes,
-			orderbook.sellOrders,
-			order_id,
-			new_quantity
-		))
-		return;
+
+	modify_order(
+		*maybeOrder,
+		maybeOrder->side == Side::BUY ? orderbook.buyLevels : orderbook.sellLevels,
+		order_id,
+		new_quantity
+	);
+	if (new_quantity == 0)
+		maybeOrder = std::nullopt;
 }
 
-std::optional<Order> lookup_order(std::vector<std::deque<Order>>& orders, IdType order_id)
+template <typename Orders> std::optional<Order> lookup_order(Orders& orders, IdType order_id)
 {
-	for (auto it = orders.begin(); it != orders.end();)
-	{
-		auto& ordersAtLevel = *it;
-		for (auto orderIt = ordersAtLevel.begin(); orderIt != ordersAtLevel.end();)
-		{
-			if (orderIt->id == order_id)
-				return *orderIt;
-			++orderIt;
-		}
-		++it;
-	}
-	return std::nullopt;
+	return orders[order_id];
 }
 
 uint32_t get_volume_at_level(Orderbook& orderbook, Side side, PriceType price)
 {
 	if (side == Side::BUY)
 	{
-		auto it = std::find_if(
-			orderbook.buyPrices.begin(),
-			orderbook.buyPrices.end(),
-			[price](const auto p) { return p == price; }
-		);
-		return it != orderbook.buyPrices.end()
-			? orderbook.buyVolumes[std::distance(orderbook.buyPrices.begin(), it)]
-			: 0;
+		return orderbook.buyLevels[price].volume;
 	}
 	else if (side == Side::SELL)
 	{
-		auto it = std::find_if(
-			orderbook.sellPrices.begin(),
-			orderbook.sellPrices.end(),
-			[price](const auto p) { return p == price; }
-		);
-		return it != orderbook.sellPrices.end()
-			? orderbook.sellVolumes[std::distance(orderbook.sellPrices.begin(), it)]
-			: 0;
+		return orderbook.sellLevels[price].volume;
 	}
 	return 0;
 }
@@ -252,20 +230,29 @@ uint32_t get_volume_at_level(Orderbook& orderbook, Side side, PriceType price)
 // correct
 Order lookup_order_by_id(Orderbook& orderbook, IdType order_id)
 {
-	auto order1 = lookup_order(orderbook.buyOrders, order_id);
-	auto order2 = lookup_order(orderbook.sellOrders, order_id);
-	if (order1.has_value())
-		return *order1;
-	if (order2.has_value())
-		return *order2;
+	auto order = lookup_order(orderbook.orders, order_id);
+	if (order.has_value())
+		return *order;
 	throw std::runtime_error("Order not found");
 }
 
 bool order_exists(Orderbook& orderbook, IdType order_id)
 {
-	auto order1 = lookup_order(orderbook.buyOrders, order_id);
-	auto order2 = lookup_order(orderbook.sellOrders, order_id);
-	return (order1.has_value() || order2.has_value());
+	auto order = lookup_order(orderbook.orders, order_id);
+	return order.has_value();
 }
 
-Orderbook* create_orderbook() { return new Orderbook; }
+Orderbook* create_orderbook()
+{
+	Orderbook* ob = static_cast<Orderbook*>(malloc(sizeof(Orderbook)));
+	if (ob == nullptr)
+	{
+		// Handle allocation failure!
+		perror("Failed to allocate memory for Orderbook");
+		return nullptr;
+	}
+	// The constructor of Orderbook will be called here, initializing buyLevels, sellLevels, and
+	// orders.
+	return ob;
+}
+
