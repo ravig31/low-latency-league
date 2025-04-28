@@ -15,23 +15,17 @@
 
 inline void add_order_to_level(PriceLevel& level, IdType order_id, QuantityType quantity)
 {
-	if (level.count < MAX_ORDERS_PER_LEVEL)
+
+	// Find first free slot and use it
+	for (size_t i = 0; i < MAX_ORDERS_PER_LEVEL; i++)
 	{
-		// Find first free slot and use it
-		for (size_t i = 0; i < MAX_ORDERS_PER_LEVEL; i++)
+		if (level.orders[i] == 0) // Assuming 0 is invalid order ID
 		{
-			if (level.orders[i] == 0) // Assuming 0 is invalid order ID
-			{
-				level.orders[i] = order_id;
-				level.volume += quantity;
-				level.count++;
-				break;
-			}
+			level.orders[i] = order_id;
+			level.volume += quantity;
+			level.count++;
+			break;
 		}
-	}
-	else
-	{
-		throw std::runtime_error("level full");
 	}
 }
 
@@ -51,24 +45,19 @@ inline void remove_order_from_level(PriceLevel& level, IdType order_id)
 inline void compact_price_level(PriceLevel& level)
 {
 	uint16_t writeIdx = 0;
-
-	for (uint16_t readIdx = 0; readIdx < level.count; ++readIdx)
+	for (uint16_t readIdx = 0; readIdx < MAX_ORDERS_PER_LEVEL; ++readIdx)
 	{
-		if (level.orders[readIdx] != 0)
-		{
-			if (writeIdx != readIdx)
-			{
-				level.orders[writeIdx] = level.orders[readIdx];
-			}
-			++writeIdx;
-		}
+		bool shouldKeep = (level.orders[readIdx] != 0);
+		level.orders[writeIdx] =
+			level.orders[readIdx] * shouldKeep + level.orders[writeIdx] * !shouldKeep;
+		writeIdx += shouldKeep;
 	}
-
 	level.count = writeIdx;
 }
 
 template <typename Levels, typename Orders, typename Condition>
-uint32_t process_orders(Order& order, Orders& orders, Levels& levels, Condition cond)
+inline __attribute__((always_inline, hot)) uint32_t
+process_orders(Order& order, Orders& orders, Levels& levels, Condition cond)
 {
 	uint32_t matchCount = 0;
 
@@ -78,13 +67,14 @@ uint32_t process_orders(Order& order, Orders& orders, Levels& levels, Condition 
 		PriceType price = (order.side == Side::BUY) ? i : (MAX_PRICE - 1 - i);
 		auto& level = levels[price];
 
-		if (level.volume == 0)
+		if (__builtin_expect(level.volume == 0, 0))
 			continue;
 
 		// Check if this price matches our condition
 		if (!(price == order.price || cond(order.price, price)))
 			break;
 
+#pragma GCC unroll 4
 		for (uint16_t i = 0; i < level.count && order.quantity > 0; ++i)
 		{
 			auto& matchingOrder = orders[level.orders[i]];
@@ -118,16 +108,6 @@ uint32_t match_order(Orderbook& orderbook, const Order& incoming)
 {
 	uint32_t matchCount = 0;
 	Order order = incoming; // Create a copy to modify the quantity
-
-	if (incoming.id > MAX_ORDERS)
-	{
-		throw std::runtime_error("order out of bounds");
-	}
-
-	if (incoming.price > MAX_PRICE)
-	{
-		throw std::runtime_error("price out of bounds");
-	}
 
 	if (order.side == Side::BUY)
 	{
@@ -255,4 +235,3 @@ Orderbook* create_orderbook()
 	// orders.
 	return ob;
 }
-

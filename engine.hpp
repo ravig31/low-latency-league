@@ -24,8 +24,8 @@ struct Order
 };
 
 constexpr uint16_t MAX_ORDERS = 10'000;
-constexpr uint16_t MAX_ORDERS_PER_LEVEL = 496;
-constexpr uint16_t MAX_PRICE = 4400;
+constexpr uint16_t MAX_ORDERS_PER_LEVEL = 1024;
+constexpr uint16_t MAX_PRICE = 4512;
 
 struct PriceLevel
 {
