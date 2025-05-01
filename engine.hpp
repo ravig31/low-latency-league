@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <optional>
+#include <unordered_map>
 
 enum class Side : uint8_t
 {
@@ -24,8 +25,10 @@ struct Order
 };
 
 constexpr uint16_t MAX_ORDERS = 10'000;
-constexpr uint16_t MAX_ORDERS_PER_LEVEL = 1024;
-constexpr uint16_t MAX_PRICE = 4512;
+constexpr uint16_t MAX_ORDERS_PER_LEVEL = 512;
+constexpr uint16_t MAX_PRICE = 4500;
+constexpr uint16_t BUFFER_SIZE = 4;
+const size_t BUFFER_MASK = BUFFER_SIZE - 1; // 127 (0x7F)
 
 struct PriceLevel
 {
@@ -36,19 +39,22 @@ struct PriceLevel
 
 // You CAN and SHOULD change this
 struct Orderbook {
-    std::array<PriceLevel, MAX_PRICE> buyLevels;
-    std::array<PriceLevel, MAX_PRICE> sellLevels;
-    std::array<std::optional<Order>, MAX_ORDERS> orders;
+    std::array<PriceLevel, BUFFER_SIZE> buyLevels;
+    std::array<PriceLevel, BUFFER_SIZE> sellLevels;
 
+	PriceType baseBuyPrice = 0;
+	PriceType baseSellPrice = 0;
+
+	std::unordered_map<PriceType, PriceLevel> buyOutliers;
+	std::unordered_map<PriceType, PriceLevel> sellOutliers;
+
+
+    std::array<std::optional<Order>, MAX_ORDERS> orders;
     Orderbook() : buyLevels{}, sellLevels{} {} 
+
+	
 };
 
-// // You CAN and SHOULD change this
-// struct Orderbook
-// {
-// 	std::vector<std::pair<PriceType, std::pair<VolumeType, std::deque<Order>>>> buyLevels;
-// 	std::vector<std::pair<PriceType, std::pair<VolumeType, std::deque<Order>>>> sellLevels;
-// };
 
 extern "C"
 {
