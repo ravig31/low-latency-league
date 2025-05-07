@@ -31,11 +31,40 @@ constexpr uint16_t MAX_ORDERS_PER_LEVEL = 512;
 constexpr uint16_t BUFFER_SIZE = 128;
 const size_t BUFFER_MASK = BUFFER_SIZE - 1; // 127 (0x7F)
 
-struct PriceLevel
-{
-	uint32_t volume = 0;
-	uint16_t count = 0;
-	std::array<IdType, MAX_ORDERS_PER_LEVEL> orders;
+struct PriceLevel {
+
+    uint32_t volume = 0;
+    uint16_t count = 0;
+    std::array<IdType, MAX_ORDERS_PER_LEVEL> orders;
+    uint16_t next_index = 0; // Next position to insert an order
+
+    void add_order(IdType order_id, QuantityType quantity) {
+		volume += quantity;
+        orders[next_index] = order_id;
+        next_index = (next_index + 1) % MAX_ORDERS_PER_LEVEL;
+        count++;
+    }
+    
+    int find_order(IdType order_id) const {
+        for (size_t i = 0; i < MAX_ORDERS_PER_LEVEL; i++) {
+            if (count > 0 && orders[i] == order_id) {
+                return static_cast<int>(i);
+            }
+        }
+        return -1; // Order not found
+    }
+    
+    void remove_order(size_t position) {
+        uint16_t last_pos = (next_index == 0) ? MAX_ORDERS_PER_LEVEL - 1 : next_index - 1;
+        // If we're not removing the last element, move the last element to the removed position
+        if (position != last_pos) {
+            orders[position] = orders[last_pos];
+        }
+        // Update next_index and count
+        next_index = (next_index == 0) ? MAX_ORDERS_PER_LEVEL - 1 : next_index - 1;
+        count--;
+    }
+ 
 };
 
 // You CAN and SHOULD change this
