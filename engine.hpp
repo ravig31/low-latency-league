@@ -1,9 +1,11 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
-#include <unordered_map>
+#include <map>
 
 enum class Side : uint8_t
 {
@@ -26,8 +28,7 @@ struct Order
 
 constexpr uint16_t MAX_ORDERS = 10'000;
 constexpr uint16_t MAX_ORDERS_PER_LEVEL = 512;
-constexpr uint16_t MAX_PRICE = 4500;
-constexpr uint16_t BUFFER_SIZE = 4;
+constexpr uint16_t BUFFER_SIZE = 128;
 const size_t BUFFER_MASK = BUFFER_SIZE - 1; // 127 (0x7F)
 
 struct PriceLevel
@@ -41,12 +42,15 @@ struct PriceLevel
 struct Orderbook {
     std::array<PriceLevel, BUFFER_SIZE> buyLevels;
     std::array<PriceLevel, BUFFER_SIZE> sellLevels;
+	
+	size_t activeBuyLevels = 0;
+	size_t activeSellLevels = 0;
 
 	PriceType baseBuyPrice = 0;
 	PriceType baseSellPrice = 0;
 
-	std::unordered_map<PriceType, PriceLevel> buyOutliers;
-	std::unordered_map<PriceType, PriceLevel> sellOutliers;
+	std::map<PriceType, PriceLevel, std::greater<PriceType>> buyOutliers;
+	std::map<PriceType, PriceLevel> sellOutliers;
 
 
     std::array<std::optional<Order>, MAX_ORDERS> orders;
