@@ -1,11 +1,13 @@
 #pragma once
 
+#include "circular_buffer.h"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
-#include <optional>
 #include <map>
+#include <optional>
 
 enum class Side : uint8_t
 {
@@ -29,51 +31,32 @@ struct Order
 constexpr uint16_t MAX_ORDERS = 10'000;
 constexpr uint16_t MAX_ORDERS_PER_LEVEL = 512;
 constexpr uint16_t BUFFER_SIZE = 128;
-const size_t BUFFER_MASK = BUFFER_SIZE - 1; // 127 (0x7F)
+const uint16_t BUFFER_MASK = BUFFER_SIZE - 1; // 127 (0x7F)
+constexpr PriceType PROACTIVE_CENTER_LEEWAY = BUFFER_SIZE / 4; // How far from true center is acceptable
+constexpr PriceType MIN_PRICE_FOR_NON_ZERO_BASE = BUFFER_SIZE / 2;
 
-struct PriceLevel {
 
-    uint32_t volume = 0;
-    uint16_t count = 0;
-    std::array<IdType, MAX_ORDERS_PER_LEVEL> orders;
-    uint16_t next_index = 0; // Next position to insert an order
+struct PriceLevel
+{
 
-    void add_order(IdType order_id, QuantityType quantity) {
-		volume += quantity;
-        orders[next_index] = order_id;
-        next_index = (next_index + 1) % MAX_ORDERS_PER_LEVEL;
-        count++;
-    }
-    
-    int find_order(IdType order_id) const {
-        for (size_t i = 0; i < MAX_ORDERS_PER_LEVEL; i++) {
-            if (count > 0 && orders[i] == order_id) {
-                return static_cast<int>(i);
-            }
-        }
-        return -1; // Order not found
-    }
-    
-    void remove_order(size_t position) {
-        uint16_t last_pos = (next_index == 0) ? MAX_ORDERS_PER_LEVEL - 1 : next_index - 1;
-        // If we're not removing the last element, move the last element to the removed position
-        if (position != last_pos) {
-            orders[position] = orders[last_pos];
-        }
-        // Update next_index and count
-        next_index = (next_index == 0) ? MAX_ORDERS_PER_LEVEL - 1 : next_index - 1;
-        count--;
-    }
- 
+	uint32_t volume = 0;
+    CircularBuffer<IdType> orders{MAX_ORDERS_PER_LEVEL};
+
+    inline uint16_t count() { return orders.size(); }
+
+    inline void add_order(Order& order);
+
+    inline void fill_front_order(QuantityType quantity);
+
+    inline void find_and_remove_order(Order& order);
 };
 
 // You CAN and SHOULD change this
-struct Orderbook {
-    std::array<PriceLevel, BUFFER_SIZE> buyLevels;
-    std::array<PriceLevel, BUFFER_SIZE> sellLevels;
-	
-	size_t activeBuyLevels = 0;
-	size_t activeSellLevels = 0;
+struct Orderbook
+{
+	std::array<PriceLevel, BUFFER_SIZE> buyLevels;
+	std::array<PriceLevel, BUFFER_SIZE> sellLevels;
+
 
 	PriceType baseBuyPrice = 0;
 	PriceType baseSellPrice = 0;
@@ -81,13 +64,24 @@ struct Orderbook {
 	std::map<PriceType, PriceLevel, std::greater<PriceType>> buyOutliers;
 	std::map<PriceType, PriceLevel> sellOutliers;
 
+	std::array<std::optional<Order>, MAX_ORDERS> orders;
+	Orderbook()
+		: buyLevels{}
+		, sellLevels{}
+	{
+	}
 
-    std::array<std::optional<Order>, MAX_ORDERS> orders;
-    Orderbook() : buyLevels{}, sellLevels{} {} 
+    int activeLevels(Side side){
+        int res = 0;
+        for (auto& level: side == Side::BUY ? buyLevels: sellLevels ){
+            if (level.volume > 0){
+                res++;
+            }
+        }
+        return res;
+    }
 
-	
 };
-
 
 extern "C"
 {
