@@ -3,18 +3,18 @@
 #include <csignal>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
-#include <string>
 #include <utility>
-
+static bool g_printed = false;
 // Debug tracking
 #define DEBUG_LOG(msg)                                                                             \
-	std::cerr << "[DEBUG] " << __FILE__ << ":" << __LINE__ << " - " << msg << std::endl
+	std::cout << "[DEBUG] " << __FILE__ << ":" << __LINE__ << " - " << msg << std::endl
 #define ERROR_LOG(msg)                                                                             \
-	std::cerr << "[ERROR] " << __FILE__ << ":" << __LINE__ << " - " << msg << std::endl
+	std::cout << "[ERROR] " << __FILE__ << ":" << __LINE__ << " - " << msg << std::endl
 
 inline void PriceLevel::add_order(Order& order)
 {
@@ -99,114 +99,86 @@ inline bool price_in_buffer_range(PriceType price, PriceType currentBase)
 	return (relativePosition >= 0 && relativePosition < BUFFER_SIZE);
 }
 
-inline PriceType calculate_ideal_base_price(PriceType target_center_price) {
-    if (target_center_price <= MIN_PRICE_FOR_NON_ZERO_BASE) {
-        return 0;
-    }
-    return target_center_price - (BUFFER_SIZE / 2);
+inline PriceType calculate_ideal_base_price(PriceType target_center_price)
+{
+	if (target_center_price <= MIN_PRICE_FOR_NON_ZERO_BASE)
+	{
+		return 0;
+	}
+	return target_center_price - (BUFFER_SIZE / 2);
 }
 
 // Adjust the buffer range to ensure it always contains the best prices
 template <typename PriceBuffer, typename OutlierMap>
-void repopulate_buffer(PriceType& basePrice, PriceBuffer& levels, OutlierMap& outliers)
+void shift_repopulate_buffer(
+	PriceType target_center_price,
+	PriceType& currentBasePrice,
+	PriceBuffer& levels,
+	OutlierMap& outliers
+)
 {
-	try
+	PriceType new_base_price = calculate_ideal_base_price(target_center_price);
+	OutlierMap temp_all_levels;
+
+	for (uint16_t i = 0; i < BUFFER_SIZE; ++i)
 	{
-		size_t activeLevels = 0;
-		for (auto& level : levels)
+		if (levels[i].volume > 0)
 		{
-			if (level.volume > 0)
-			{
-				activeLevels++;
-			}
+			PriceType level_actual_price = currentBasePrice + i;
+			temp_all_levels[level_actual_price] = std::move(levels[i]);
+			levels[i] = PriceLevel{};
 		}
-		// Check if we need to recenter the buffer
-		if (activeLevels == 0 && !outliers.empty())
+	}
+
+	// 2. Collect from outliers
+	for (auto& outlier_entry : outliers)
+	{
+		PriceType outlier_price = outlier_entry.first;
+		PriceLevel& outlier_level_object = outlier_entry.second;
+		if (outlier_level_object.volume > 0)
 		{
-			// Buffer is empty but outliers exist - reset base price to best outlier
-			PriceType newBasePrice = get_base_price(outliers.begin()->first);
+			auto [iterator, inserted] =
+				temp_all_levels.try_emplace(outlier_price, std::move(outlier_level_object));
 
-			// Move appropriate outliers into the buffer
-			auto it = outliers.begin();
-			while (it != outliers.end())
+			if (!inserted)
 			{
-				if (price_in_buffer_range(it->first, newBasePrice))
-				{
-					// Move from outliers to buffer
-					PriceType idx = get_price_index(it->first, newBasePrice);
-					if (idx < BUFFER_SIZE)
-					{
-						levels[idx] = std::move(it->second);
-						it = outliers.erase(it);
-					}
-					else
-					{
-						ERROR_LOG("Invalid buffer index during repopulate: " << idx);
-						++it;
-					}
-				}
-				else
-				{
-					++it;
-				}
-			}
-
-			basePrice = newBasePrice;
-		}
-		else if (activeLevels < BUFFER_SIZE / 4 && !outliers.empty())
-		{
-			// Buffer is sparsely populated - consider recentering
-			PriceType newBasePrice = get_base_price(outliers.begin()->first);
-
-			if (newBasePrice != basePrice)
-			{
-				// Create temporary storage for all active levels
-				auto allLevels = outliers;
-				outliers.clear();
-
-				// Move buffer levels to temporary storage
-				for (uint16_t i = 0; i < BUFFER_SIZE; i++)
-				{
-					if (levels[i].count() > 0)
-					{
-						PriceType levelPrice = basePrice + i;
-						allLevels[levelPrice] = std::move(levels[i]);
-						levels[i] = PriceLevel{}; // Reset the level
-					}
-				}
-
-				// Reset base price
-				basePrice = newBasePrice;
-
-				// Redistribute levels between buffer and outliers
-				for (auto& [price, level] : allLevels)
-				{
-					if (price_in_buffer_range(price, basePrice))
-					{
-						// In buffer range
-						PriceType idx = get_price_index(price, basePrice);
-						if (idx < BUFFER_SIZE)
-						{
-							levels[idx] = std::move(level);
-						}
-						else
-						{
-							ERROR_LOG("Invalid buffer index during redistribution: " << idx);
-							outliers[price] = std::move(level); // Put in outliers instead
-						}
-					}
-					else
-					{
-						// In outlier range
-						outliers[price] = std::move(level);
-					}
-				}
+				ERROR_LOG(
+					"Invariant Violation: Price "
+					<< outlier_price
+					<< " found in outliers also existed in buffer during repopulation attempt."
+				);
 			}
 		}
 	}
-	catch (const std::exception& e)
+	outliers.clear();
+	currentBasePrice = new_base_price;
+
+	for (auto& level : levels)
 	{
-		ERROR_LOG("Exception in repopulate_buffer: " << e.what());
+		level.volume = 0;
+		if (level.orders.size() > 0)
+		{
+			level.orders.clear();
+		}
+	}
+
+	for (auto& entry_to_distribute : temp_all_levels)
+	{
+		PriceType price = entry_to_distribute.first;
+		PriceLevel& level_data = entry_to_distribute.second;
+
+		if (level_data.volume == 0)
+			continue;
+
+		if (price_in_buffer_range(price, currentBasePrice))
+		{
+			size_t idx = get_price_index(price, currentBasePrice);
+			levels[idx] = std::move(level_data);
+		}
+		else
+		{
+			outliers[price] = std::move(level_data);
+		}
 	}
 }
 
@@ -276,60 +248,131 @@ void add_order(
 {
 	try
 	{
-		// Check order ID is valid
-		if (order.id >= MAX_ORDERS)
-		{
-			ERROR_LOG("Invalid order ID: " << order.id << " >= " << MAX_ORDERS);
-			return;
+		if (basePrice == 0)
+		{ // A more robust check for "empty" might be needed
+			bool isEmpty = true;
+			for (const auto& lvl : levels)
+				if (lvl.volume > 0)
+					isEmpty = false;
+			if (isEmpty && outliers.empty())
+			{
+				basePrice = calculate_ideal_base_price(order.price);
+				// No existing orders, so no complex shift, just set base and place.
+			}
 		}
 
-		// Store the order in the orders array
+		// B. Determine if a shift is needed (Reactive or Proactive)
+		bool needs_shift = false;
+		PriceType new_center_target_price = 0;
+
+		// Find current best price in the buffer for proactive centering
+		PriceType current_best_price_in_buffer = 0;
+		bool best_price_found_in_buffer = false;
+		for (int i = BUFFER_SIZE - 1; i >= 0; --i)
+		{
+			size_t priceIdx = order.side == Side::SELL ? i : (BUFFER_SIZE - 1) - i;
+
+			if (levels[priceIdx].volume > 0)
+			{
+				current_best_price_in_buffer = basePrice + i;
+				best_price_found_in_buffer = true;
+				break;
+			}
+		}
+
+		if (!best_price_found_in_buffer && !outliers.empty())
+		{
+			if (order.side == Side::BUY)
+			{ // Highest price outlier
+				current_best_price_in_buffer =
+					outliers.begin()->first; // std::map<PriceType, ..., std::greater<>>
+			}
+			else
+			{ // Lowest price outlier
+				current_best_price_in_buffer =
+					outliers.begin()->first; // std::map<PriceType, ..., std::less<>> (default)
+			}
+			best_price_found_in_buffer = true;
+		}
+
+		// I. Reactive Shift: Is the new order out of the current buffer's range?
+		if ((order.price > basePrice + BUFFER_SIZE - 1 && order.side == Side::BUY) ||
+			(order.price < basePrice && order.side == Side::SELL))
+		{
+			needs_shift = true;
+			new_center_target_price = order.price; // Center around the new order
+		}
+		// II. Proactive Shift: Is the (potential) new best price too close to an edge?
+		else if (best_price_found_in_buffer)
+		{ // Only do proactive if there's a reference best price
+			PriceType prospective_best_price;
+			if (order.side == Side::BUY)
+			{
+				prospective_best_price = std::max(order.price, current_best_price_in_buffer);
+			}
+			else
+			{ // SELL
+				prospective_best_price = std::min(order.price, current_best_price_in_buffer);
+			}
+
+			// Calculate where this prospective best price would land in the current buffer
+			if (price_in_buffer_range(prospective_best_price, basePrice))
+			{ // Should be true if order.price was in range
+				PriceType best_price_idx_in_buffer =
+					get_price_index(prospective_best_price, basePrice);
+
+				if (best_price_idx_in_buffer < PROACTIVE_CENTER_LEEWAY ||
+					best_price_idx_in_buffer >= (BUFFER_SIZE - PROACTIVE_CENTER_LEEWAY))
+				{
+					needs_shift = true;
+					new_center_target_price =
+						prospective_best_price; // Re-center around this best price
+				}
+			}
+			else
+			{
+				needs_shift = true;
+				new_center_target_price = order.price;
+			}
+		}
+		else if (!best_price_found_in_buffer)
+		{
+			needs_shift = true;
+			new_center_target_price = order.price;
+		}
+
+		// C. Perform the shift if needed
+		if (needs_shift)
+		{
+			// Ensure new_center_target_price is valid before shifting
+			if (new_center_target_price == 0 && order.price > 0)
+				new_center_target_price = order.price; // Failsafe
+
+			if (new_center_target_price > 0)
+			{ // Only shift if we have a valid target
+				shift_repopulate_buffer(new_center_target_price, basePrice, levels, outliers);
+			}
+			else if (basePrice == 0 && order.price > 0)
+			{ // Very first order, base not set yet by shift
+				basePrice = calculate_ideal_base_price(order.price);
+				shift_repopulate_buffer(order.price, basePrice, levels, outliers);
+			}
+		}
+
 		orders[order.id] = order;
 
-		// Determine if the order should go in the buffer or outliers
-		// If buffer is empty, this becomes the first order
-		if (basePrice == 0) [[unlikely]]
+		if (price_in_buffer_range(order.price, basePrice))
 		{
-			basePrice = get_base_price(order.price);
 			size_t index = get_price_index(order.price, basePrice);
-			if (index >= BUFFER_SIZE)
-			{
-				ERROR_LOG("Invalid price index during first order: " << index);
-				return;
-			}
-			auto& level = levels[index];
-			if (level.count() >= MAX_ORDERS_PER_LEVEL)
-			{
-				ERROR_LOG("Price level overflow on first order");
-				return;
-			}
-			level.add_order(order);
-			return;
+			// Pass the definitive version from orderbook.orders
+			levels[index].add_order(order);
 		}
-
-		// DEBUG_LOG("active levels " + std::to_string(activeLevels));
-		// If new ask or bid is worse than whats in buffer put in outliers
-		if ((order.price < basePrice && order.side == Side::BUY) ||
-			(order.price > basePrice + BUFFER_SIZE - 1 && order.side == Side::SELL)) [[unlikely]]
+		else
 		{
-			auto& level = outliers[order.price];
-			// if (level.count() >= MAX_ORDERS_PER_LEVEL) {
-			//     ERROR_LOG("Outlier overflow");
-			// }
-			level.add_order(order);
-			return;
+			// If, after all shifting, it's still out of range (e.g., extreme price far from center)
+			// or if basePrice is still 0 (should not happen if order.price > 0)
+			outliers[order.price].add_order(order);
 		}
-
-		// if new price is better than what in buffer -> shift buffer
-		if (!price_in_buffer_range(order.price, basePrice)) [[unlikely]]
-		{
-			adjust_buffer(order.price, basePrice, levels, outliers);
-		}
-
-		size_t index = get_price_index(order.price, basePrice);
-
-		auto& level = levels[index];
-		level.add_order(order);
 	}
 	catch (const std::exception& e)
 	{
@@ -459,12 +502,6 @@ uint32_t process_orders(
 			}
 		}
 
-		// After matching, shift the buffer range if needed
-		if (matchCount > 0) [[unlikely]]
-		{
-		    repopulate_buffer(basePrice, levels, outliers);
-		}
-
 		return matchCount;
 	}
 	catch (const std::exception& e)
@@ -478,10 +515,7 @@ uint32_t match_order(Orderbook& orderbook, const Order& incoming)
 {
 	try
 	{
-		int activeBuyLevels = orderbook.activeLevels(Side::BUY);
-		int activeSellLevels = orderbook.activeLevels(Side::SELL);
 
-		// std::stringstream ss;
 		// ss << "Incoming side: " << incoming.side;
 		// DEBUG_LOG(ss.str());
 		// DEBUG_LOG("Incoming price: " + std::to_string(incoming.price));
@@ -504,6 +538,7 @@ uint32_t match_order(Orderbook& orderbook, const Order& incoming)
 
 		if (order.side == Side::BUY)
 		{
+			orderbook.buycounts[order.price]++;
 			// For a BUY, match with sell orders priced at or below the order's price.
 			matchCount = process_orders(
 				order,
@@ -523,6 +558,7 @@ uint32_t match_order(Orderbook& orderbook, const Order& incoming)
 		}
 		else
 		{ // Side::SELL
+			orderbook.sellcounts[order.price]++;
 			matchCount = process_orders(
 				order,
 				orderbook.baseBuyPrice,
@@ -540,6 +576,37 @@ uint32_t match_order(Orderbook& orderbook, const Order& incoming)
 					orderbook.sellOutliers
 				);
 		}
+
+		// if (orderbook.buycounts.size() > 500 && !g_printed)
+		// {
+		// 	orderbook.outputCounts();
+		// 	g_printed = true;
+		// 	int activeBuyLevels = orderbook.activeLevels(Side::BUY);
+		// 	int activeSellLevels = orderbook.activeLevels(Side::SELL);
+
+		// 	std::stringstream ss;;
+		// 	DEBUG_LOG(ss.str());
+		// 	DEBUG_LOG("Incoming price: " + std::to_string(incoming.price));
+		// 	DEBUG_LOG("Base buy price: " + std::to_string(orderbook.baseBuyPrice));
+		// 	DEBUG_LOG("Base sell price: " + std::to_string(orderbook.baseSellPrice));
+		// 	DEBUG_LOG("Active buy levels:" + std::to_string(activeBuyLevels));
+		// 	DEBUG_LOG("Outlier buy levels:" + std::to_string(orderbook.buyOutliers.size()));
+		// 	DEBUG_LOG("Active sell levels:" + std::to_string(activeSellLevels));
+		// 	DEBUG_LOG("Outlier sell levels:" + std::to_string(orderbook.sellOutliers.size()));
+		// }
+
+		auto maxbuyDepth = std::max_element(orderbook.buycounts.begin(), orderbook.buycounts.end());
+		auto maxsellDepth = std::max_element(orderbook.buycounts.begin(), orderbook.buycounts.end());
+		if (maxbuyDepth != orderbook.buycounts.end() && maxbuyDepth->second > 20)
+		{
+			std::cout << "Buy depth " << maxbuyDepth->second << '\n';
+		}
+		if (maxsellDepth != orderbook.sellcounts.end() && maxsellDepth->second > 20)
+		{
+			std::cout << "Sell depth " << maxsellDepth->second << '\n';
+
+		}
+
 		return matchCount;
 	}
 	catch (const std::exception& e)
@@ -595,9 +662,38 @@ bool modify_order(
 		{
 			level->find_and_remove_order(order);
 
-			if (level->count() == 0) [[unlikely]]
+			PriceType new_best_price_in_buf = 0;
+			bool found_new_best = false;
+
+			for (int i = BUFFER_SIZE - 1; i >= 0; --i)
 			{
-			    repopulate_buffer(basePrice,  levels, outliers);
+				size_t priceIdx = order.side == Side::SELL ? i : (BUFFER_SIZE - 1) - i;
+
+				if (levels[priceIdx].volume > 0)
+				{
+					new_best_price_in_buf = basePrice + i;
+					found_new_best = true;
+					break;
+				}
+			}
+
+			if (found_new_best)
+			{
+				PriceType best_price_idx = get_price_index(new_best_price_in_buf, basePrice);
+				if (best_price_idx < PROACTIVE_CENTER_LEEWAY ||
+					best_price_idx >= (BUFFER_SIZE - PROACTIVE_CENTER_LEEWAY))
+				{
+					shift_repopulate_buffer(new_best_price_in_buf, basePrice, levels, outliers);
+				}
+			}
+			else
+			{
+				if (!outliers.empty())
+				{
+					PriceType best_outlier_price =
+						outliers.begin()->first; // Adjust for buy/sell comparator
+					shift_repopulate_buffer(best_outlier_price, basePrice, levels, outliers);
+				}
 			}
 			return true;
 		}

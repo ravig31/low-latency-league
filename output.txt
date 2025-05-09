@@ -1,0 +1,44 @@
+g++ -std=c++17 -Wall -Wextra -O2 -fPIC -c engine.cpp -o engine.o
+g++ -std=c++17 -Wall -Wextra -O2 -shared -o engine.so engine.o
+perf stat -B -e task-clock,context-switches,cpu-migrations,page-faults,cycles,instructions,branches,branch-misses,cache-references,cache-misses,L1-dcache-loads,L1-icache-loads,L1-icache-load-misses,LLC-loads,LLC-load-misses lll-bench /home/ravig31/main/low-latency-league/engine.so -d 1 
+Path to engine: /home/ravig31/main/low-latency-league/engine.so
+Preparing benchmark
+======================================
+=========== Add_order stats ==========
+======================================
+CPU Cycles: 3518132177
+L1 Cache Misses: 37521637721
+L2 Cache Misses: 1
+Branch Mispredictions: 3518132177
+Branch Misprediction Rate: 100.096
+
+======================================
+========== Modify_order stats ========
+======================================
+CPU Cycles: 1315804
+L1 Cache Misses: 14033350
+L2 Cache Misses: 1
+Branch Mispredictions: 1315804
+Branch Misprediction Rate: 100.096
+
+======================================
+========== Get_volume stats ==========
+======================================
+CPU Cycles: 1813703
+L1 Cache Misses: 19343572
+L2 Cache Misses: 1
+Branch Mispredictions: 1813703
+Branch Misprediction Rate: 100.096
+
+
+Running competition benchmark (60% add_order, 40% modify_order, 20% get_level)...
+======================================
+=========== Combined stats ===========
+======================================
+CPU Cycles: 2010361244
+L1 Cache Misses: 21440982665
+L2 Cache Misses: 1
+Branch Mispredictions: 2010361244
+Branch Misprediction Rate: 100.096
+
+Failed to run benchmarks due to error: Failed validation
