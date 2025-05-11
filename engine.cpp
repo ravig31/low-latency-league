@@ -1,9 +1,15 @@
 #include "engine.hpp"
 #include <algorithm>
+#include <cstdint>
 #include <functional>
+#include <iterator>
 #include <optional>
 #include <stdexcept>
 
+// #define DEBUG_LOG(msg)
+// 	std::cout << "[DEBUG] " << __FILE__ << ":" << __LINE__ << " - " << msg << std::endl
+// #define ERROR_LOG(msg)
+// 	std::cout << "[ERROR] " << __FILE__ << ":" << __LINE__ << " - " << msg << std::endl
 // This is an example correct implementation
 // It is INTENTIONALLY suboptimal
 // You are encouraged to rewrite as much or as little as you'd like
@@ -11,183 +17,213 @@
 // Templated helper to process matching orders.
 // The Condition predicate takes the price level and the incoming order price
 // and returns whether the level qualifies.
-
-template <typename OrderList, typename Condition>
-void add_order(Order& order, OrderList& ordersList, Condition cond)
+static std::function<bool(LevelPriceType, LevelPriceType)> get_cond(Side side)
 {
-	if (ordersList.empty())
+	return side == Side::BUY ? [](LevelPriceType a, LevelPriceType b) { return a > b; }
+							 : [](LevelPriceType a, LevelPriceType b) { return a < b; };
+}
+
+inline __attribute__((always_inline, hot)) void add_order(
+	LevelPriceType price,
+	IdType order_id,
+	Side side,
+	QuantityType quantity,
+	Levels& priceLevels
+) noexcept
+{
+	// if (order.id >= orders.size())
+	// {
+	// 	ERROR_LOG(
+	// 		"Order ID " << order.id << " is out of bounds for orders array (size: " << orders.size()
+	// 					<< ")"
+	// 	);
+	// 	return;
+	// }
+	price = side == Side::BUY ? -1 * price : price;
+
+	if (priceLevels.empty()) [[unlikely]]
 	{
-		ordersList.push_back({ order.price, { order.quantity, std::deque<Order>{ order } } });
+		priceLevels.push_back({ price, PriceLevel(order_id, quantity) });
 		return;
 	}
 
-	auto rit = ordersList.rbegin();
-	while (rit != ordersList.rend() && cond(order.price, rit->first))
+	auto rit = priceLevels.rbegin();
+	while (rit != priceLevels.rend() && price > rit->first)
 	{
 		++rit;
 	}
 
-	if (rit != ordersList.rend() && rit->first == order.price)
+	if (rit != priceLevels.rend() && rit->first == price) [[likely]]
 	{
-		rit->second.second.push_back(order);
-		rit->second.first += order.quantity;
+		rit->second.add_order(order_id, quantity);
 	}
-	else
+	else [[unlikely]]
 	{
-		ordersList.insert(
-			rit.base(),
-			{ order.price, { order.quantity, std::deque<Order>{ order } } }
-		);
+		priceLevels.insert(rit.base(), { price, PriceLevel(order_id, quantity) });
 	}
 }
 
-template <typename OrderList, typename Condition>
-uint32_t process_orders(Order& order, OrderList& ordersList, Condition cond)
+inline __attribute__((always_inline, hot)) uint32_t process_orders(
+	LevelPriceType price,
+	QuantityType& quantity_ref,
+	Levels& priceLevels,
+	Orders& orders,
+	OrdersActive& ordersActive,
+	Cond cond
+) noexcept
 {
 	uint32_t matchCount = 0;
-	auto it = ordersList.rbegin();
-	while (it != ordersList.rend() && order.quantity > 0 &&
-		   (it->first == order.price || cond(order.price, it->first)))
+	auto it = priceLevels.rbegin();
+
+	while (it != priceLevels.rend() && quantity_ref > 0 &&
+		   (abs(it->first) == price || cond(price, abs(it->first))))
 	{
-		auto& ordersAtLevel = it->second.second;
-		while (!ordersAtLevel.empty() && order.quantity > 0)
+		auto& ordersAtLevel = it->second.orders;
+		while (!ordersAtLevel.empty() && quantity_ref > 0)
 		{
-			QuantityType trade = std::min(order.quantity, ordersAtLevel.front().quantity);
-			order.quantity -= trade;
-			ordersAtLevel.front().quantity -= trade;
-			it->second.first -= trade; // Decrement total volume at level
-			if (ordersAtLevel.front().quantity == 0)
+			IdType orderId = ordersAtLevel.front();
+			auto& counterOrder = orders[orderId];
+
+			QuantityType trade = std::min(quantity_ref, counterOrder.quantity);
+			quantity_ref -= trade;
+			counterOrder.quantity -= trade;
+			it->second.volume -= trade; // Decrement total volume at level
+
+			if (counterOrder.quantity == 0) [[likely]]
+			{
 				ordersAtLevel.pop_front();
+				ordersActive.reset(orderId);
+			}
 			++matchCount;
 		}
-		it = ordersAtLevel.empty() ? std::make_reverse_iterator(ordersList.erase(--it.base()))
-								   : it++;
+
+		if (ordersAtLevel.empty()) [[unlikely]]
+		{
+			it = decltype(it)(priceLevels.erase(std::next(it).base()));
+		}
+		else
+		{
+			++it; // Use pre-increment for clarity and efficiency
+		}
 	}
 	return matchCount;
 }
 
-uint32_t match_order(Orderbook& orderbook, const Order& incoming)
+uint32_t match_order(Orderbook& orderbook, const Order& incoming) noexcept
 {
 	uint32_t matchCount = 0;
-	Order order = incoming; // Create a copy to modify the quantity
+	Order order = incoming;
 
-	if (order.side == Side::BUY)
+	LevelPriceType modifiedPrice = static_cast<int16_t>(order.price);
+	auto& matchLevels = order.side == Side::BUY ? orderbook.sellLevels : orderbook.buyLevels;
+	auto cond = get_cond(order.side);
+
+	matchCount = process_orders(
+		modifiedPrice,
+		order.quantity,
+		matchLevels,
+		orderbook.orders,
+		orderbook.ordersActive,
+		cond
+	);
+	if (order.quantity > 0) [[unlikely]]
 	{
-		// For a BUY, match with sell orders priced at or below the order's price.
-		matchCount = process_orders(order, orderbook.sellOrders, std::greater<>());
-		if (order.quantity > 0)
-			add_order(order, orderbook.buyOrders, std::less<PriceType>());
+		auto& sideLevels = order.side == Side::BUY ? orderbook.buyLevels : orderbook.sellLevels;
+		orderbook.ordersActive.set(order.id);
+		orderbook.orders[order.id] = order;
+		add_order(modifiedPrice, order.id, order.side, order.quantity, sideLevels);
 	}
-	else
-	{ // Side::SELL
-		// For a SELL, match with buy orders priced at or above the order's price.
-		matchCount = process_orders(order, orderbook.buyOrders, std::less<>());
-		if (order.quantity > 0)
-			add_order(order, orderbook.sellOrders, std::greater<PriceType>());
-	}
+
 	return matchCount;
 }
 
 // Templated helper to cancel an order within a given orders map.
-template <typename OrderList>
-bool modify_order_in_map(OrderList& ordersList, IdType order_id, QuantityType new_quantity)
+inline __attribute((always_inline, hot)) void modify_order_in_book(
+	PriceLevel& level,
+	Order& order,
+	QuantityType new_quantity
+) noexcept
 {
-	for (auto it = ordersList.begin(); it != ordersList.end();)
+	level.volume += (new_quantity - order.quantity);
+	if (new_quantity != 0) [[likely]]
 	{
-		auto& ordersAtLevel = it->second.second;
-		auto& volumeAtLevel = it->second.first;
-		for (auto orderIt = ordersAtLevel.begin(); orderIt != ordersAtLevel.end();)
-		{
-			if (orderIt->id == order_id)
-			{
-				QuantityType prevQuantity = orderIt->quantity;
-
-				if (new_quantity == 0)
-				{
-					orderIt = ordersAtLevel.erase(orderIt);
-					volumeAtLevel -= prevQuantity;
-					break;
-				}
-
-				orderIt->quantity = new_quantity;
-				volumeAtLevel += (new_quantity - prevQuantity);
-				return true;
-			}
-			++orderIt;
-		}
-		it = ordersAtLevel.empty() ? ordersList.erase(it) : ++it;
+		order.quantity = new_quantity;
 	}
-	return false;
+	else [[unlikely]]
+	{
+		level.find_and_remove_order(order.id);
+	}
 }
 
-void modify_order_by_id(Orderbook& orderbook, IdType order_id, QuantityType new_quantity)
+void modify_order_by_id(Orderbook& orderbook, IdType order_id, QuantityType new_quantity) noexcept
 {
-	if (modify_order_in_map(orderbook.buyOrders, order_id, new_quantity))
+	if (!orderbook.ordersActive[order_id]) [[unlikely]]
+	{
+		// ERROR_LOG("Order with ID " << order_id << " not found in modify_order_by_id.");
 		return;
-	if (modify_order_in_map(orderbook.sellOrders, order_id, new_quantity))
-		return;
-}
+	}
+	auto& order = orderbook.orders[order_id];
 
-template <typename OrderList>
-std::optional<Order> lookup_order_in_map(OrderList& ordersList, IdType order_id)
-{
-	for (auto it = ordersList.begin(); it != ordersList.end();)
-	{
-		auto& ordersAtLevel = it->second.second;
-		for (auto orderIt = ordersAtLevel.begin(); orderIt != ordersAtLevel.end();)
+	auto& levels = order.side == Side::SELL ? orderbook.sellLevels : orderbook.buyLevels;
+	auto it = std::find_if(
+		levels.begin(),
+		levels.end(),
+		[order](const auto& level)
 		{
-			if (orderIt->id == order_id)
-				return *orderIt;
-			++orderIt;
+			LevelPriceType compPrice = order.side == Side::BUY
+				? -(static_cast<LevelPriceType>(order.price))
+				: static_cast<LevelPriceType>(order.price);
+			return level.first == compPrice;
 		}
-		++it;
+	);
+	modify_order_in_book(it->second, order, new_quantity);
+
+	if (it->second.volume == 0)
+		levels.erase(it);
+
+	if (new_quantity == 0) [[likely]]
+	{
+		orderbook.ordersActive.reset(order_id);
 	}
-	return std::nullopt;
+	else [[unlikely]]
+		order.quantity = new_quantity; // Update quantity in orders array
 }
 
-uint32_t get_volume_at_level(Orderbook& orderbook, Side side, PriceType price)
+inline Order lookup_order_in_book(const Orders& orders, IdType order_id) noexcept
 {
-	if (side == Side::BUY)
-	{
-		auto it = std::find_if(
-			orderbook.buyOrders.begin(),
-			orderbook.buyOrders.end(),
-			[price](const auto& p) { return p.first == price; }
-		);
-		return it != orderbook.buyOrders.end() ? it->second.first
-											   : 0; 
-	}
-	else if (side == Side::SELL)
-	{
-		auto it = std::find_if(
-			orderbook.sellOrders.begin(),
-			orderbook.sellOrders.end(),
-			[price](const auto& p) { return p.first == price; }
-		);
-		return it != orderbook.sellOrders.end() ? it->second.first
-												: 0;
-	}
-	return 0;
+	return orders[order_id];
+}
+
+uint32_t get_volume_at_level(Orderbook& orderbook, Side side, PriceType price) noexcept
+{
+	auto& levels = side == Side::SELL ? orderbook.sellLevels : orderbook.buyLevels;
+	auto it = std::find_if(
+		levels.begin(),
+		levels.end(),
+		[price, side](const auto& level)
+		{
+			LevelPriceType compPrice = side == Side::BUY ? -(static_cast<LevelPriceType>(price))
+														 : static_cast<LevelPriceType>(price);
+			return level.first == compPrice;
+		}
+	);
+	return it != levels.end() ? it->second.volume : 0;
 }
 
 // Functions below here don't need to be performant. Just make sure they're
 // correct
 Order lookup_order_by_id(Orderbook& orderbook, IdType order_id)
 {
-	auto order1 = lookup_order_in_map(orderbook.buyOrders, order_id);
-	auto order2 = lookup_order_in_map(orderbook.sellOrders, order_id);
-	if (order1.has_value())
-		return *order1;
-	if (order2.has_value())
-		return *order2;
-	throw std::runtime_error("Order not found");
+	if (!orderbook.ordersActive[order_id])
+		throw std::runtime_error("Order not found");
+
+	return lookup_order_in_book(orderbook.orders, order_id);
+
 }
 
 bool order_exists(Orderbook& orderbook, IdType order_id)
 {
-	auto order1 = lookup_order_in_map(orderbook.buyOrders, order_id);
-	auto order2 = lookup_order_in_map(orderbook.sellOrders, order_id);
-	return (order1.has_value() || order2.has_value());
+	return orderbook.ordersActive[order_id];
 }
 
 Orderbook* create_orderbook() { return new Orderbook; }

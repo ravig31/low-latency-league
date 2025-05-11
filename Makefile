@@ -1,15 +1,15 @@
 CXX = g++
-CXXFLAGS = -std=c++17 -Wall -Wextra -O2
+CXXFLAGS = -std=c++20 -Wall -Wextra -O2
 PERFFLAGS = -B -e task-clock,context-switches,cpu-migrations,page-faults,cycles,instructions,branches,branch-misses,cache-references,cache-misses,L1-dcache-loads,L1-icache-loads,L1-icache-load-misses,LLC-loads,LLC-load-misses
 MAKEFILE_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 all: test
 
 script: script.cpp
-	$(CXX) $(CXXFLAGS) -g -o script script.cpp engine.cpp
+	$(CXX) -std=c++20 -Wall -Wextra -g -o script script.cpp engine.cpp
 
 	
 test: tests.cpp
-	$(CXX) $(CXXFLAGS) -o tests tests.cpp engine.cpp
+	$(CXX) $(CXXFLAGS) -g -o tests tests.cpp engine.cpp
 	./tests
 
 submit: engine.cpp
@@ -20,7 +20,15 @@ submit: engine.cpp
 	perf stat $(PERFFLAGS) lll-bench $(MAKEFILE_DIR)engine.so -d 1 2>&1 | tee -a "$$BENCHMARK_FILE"
 
 benchmark:
+	$(CXX) $(CXXFLAGS) -fPIC -c engine.cpp -o engine.o
+	$(CXX) $(CXXFLAGS) -shared -o engine.so engine.o
 	perf stat $(PERFFLAGS) lll-bench $(MAKEFILE_DIR)engine.so -d 1 
+
+flame:
+	$(CXX) $(CXXFLAGS) -fPIC -c engine.cpp -o engine.o
+	$(CXX) $(CXXFLAGS) -shared -o engine.so engine.o
+	perf record -F 997 -g -a lll-bench $(MAKEFILE_DIR)engine.so -d 1
+	perf script | ${HOME}/main/FlameGraph/stackcollapse-perf.pl | ${HOME}/main/FlameGraph/flamegraph.pl > flamegraph.svg
 
 clean:
 	rm -f tests engine.o engine.so script
