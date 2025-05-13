@@ -5,3 +5,5 @@ benchmarks/*
 script
 .vscode/*
 .clang-format
+perf.*
+*.svg

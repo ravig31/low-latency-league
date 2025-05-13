@@ -24,11 +24,22 @@ benchmark:
 	$(CXX) $(CXXFLAGS) -shared -o engine.so engine.o
 	perf stat $(PERFFLAGS) lll-bench $(MAKEFILE_DIR)engine.so -d 1 
 
+record:
+	$(CXX) $(CXXFLAGS) -fPIC -c engine.cpp -o engine.o
+	$(CXX) $(CXXFLAGS) -shared -o engine.so engine.o
+	perf record -F 299 $(PERFFLAGS) lll-bench $(MAKEFILE_DIR)engine.so -d 1
+
 flame:
 	$(CXX) $(CXXFLAGS) -fPIC -c engine.cpp -o engine.o
 	$(CXX) $(CXXFLAGS) -shared -o engine.so engine.o
-	perf record -F 997 -g -a lll-bench $(MAKEFILE_DIR)engine.so -d 1
+	perf record -F 99 -g -a lll-bench $(MAKEFILE_DIR)engine.so -d 1
 	perf script | ${HOME}/main/FlameGraph/stackcollapse-perf.pl | ${HOME}/main/FlameGraph/flamegraph.pl > flamegraph.svg
+
+callgrind:
+	$(CXX) $(CXXFLAGS) -fPIC -c engine.cpp -o engine.o
+	$(CXX) $(CXXFLAGS) -shared -o engine.so engine.o
+	valgrind --tool=callgrind lll-bench $(MAKEFILE_DIR)engine.so -d 1
+	cg_annotate callgrind.out.*
 
 clean:
 	rm -f tests engine.o engine.so script
