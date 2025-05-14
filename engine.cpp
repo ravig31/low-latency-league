@@ -1,9 +1,7 @@
 #include "engine.hpp"
 #include <algorithm>
 #include <cstdint>
-#include <functional>
 #include <iterator>
-#include <optional>
 #include <stdexcept>
 
 // #define DEBUG_LOG(msg)
@@ -17,13 +15,9 @@
 // Templated helper to process matching orders.
 // The Condition predicate takes the price level and the incoming order price
 // and returns whether the level qualifies.
-static std::function<bool(LevelPriceType, LevelPriceType)> get_cond(Side side)
-{
-	return side == Side::BUY ? [](LevelPriceType a, LevelPriceType b) { return a > b; }
-							 : [](LevelPriceType a, LevelPriceType b) { return a < b; };
-}
 
-inline __attribute__((always_inline, hot)) void add_order(
+// inline __attribute__((always_inline, hot))
+void add_order(
 	LevelPriceType price,
 	IdType order_id,
 	Side side,
@@ -63,25 +57,24 @@ inline __attribute__((always_inline, hot)) void add_order(
 	}
 }
 
-inline __attribute__((always_inline, hot)) uint32_t process_orders(
+// inline __attribute__((always_inline, hot))
+uint32_t process_orders(
 	LevelPriceType price,
 	QuantityType& quantity_ref,
 	Levels& priceLevels,
 	Orders& orders,
-	OrdersActive& ordersActive,
-	Cond cond
+	OrdersActive& ordersActive
 ) noexcept
 {
 	uint32_t matchCount = 0;
 	auto it = priceLevels.rbegin();
 
-	while (it != priceLevels.rend() && quantity_ref > 0 &&
-		   (abs(it->first) == price || cond(price, abs(it->first))))
+	while (it != priceLevels.rend() && quantity_ref > 0 && (price >= it->first))
 	{
 		auto& ordersAtLevel = it->second.orders;
-		while (!ordersAtLevel.empty() && quantity_ref > 0)
+		while (!ordersAtLevel->empty() && quantity_ref > 0)
 		{
-			IdType orderId = ordersAtLevel.front();
+			IdType orderId = ordersAtLevel->front();
 			auto& counterOrder = orders[orderId];
 
 			QuantityType trade = std::min(quantity_ref, counterOrder.quantity);
@@ -91,13 +84,13 @@ inline __attribute__((always_inline, hot)) uint32_t process_orders(
 
 			if (counterOrder.quantity == 0) [[likely]]
 			{
-				ordersAtLevel.pop_front();
+				ordersAtLevel->pop_front();
 				ordersActive.reset(orderId);
 			}
 			++matchCount;
 		}
 
-		if (ordersAtLevel.empty()) [[unlikely]]
+		if (ordersAtLevel->empty()) [[unlikely]]
 		{
 			it = decltype(it)(priceLevels.erase(std::next(it).base()));
 		}
@@ -116,33 +109,34 @@ uint32_t match_order(Orderbook& orderbook, const Order& incoming) noexcept
 
 	LevelPriceType modifiedPrice = static_cast<int16_t>(order.price);
 	auto& matchLevels = order.side == Side::BUY ? orderbook.sellLevels : orderbook.buyLevels;
-	auto cond = get_cond(order.side);
 
 	matchCount = process_orders(
-		modifiedPrice,
+		incoming.side == Side::SELL ? -modifiedPrice : modifiedPrice,
 		order.quantity,
 		matchLevels,
 		orderbook.orders,
-		orderbook.ordersActive,
-		cond
+		orderbook.ordersActive
 	);
 	if (order.quantity > 0) [[unlikely]]
 	{
 		auto& sideLevels = order.side == Side::BUY ? orderbook.buyLevels : orderbook.sellLevels;
 		orderbook.ordersActive.set(order.id);
 		orderbook.orders[order.id] = order;
-		add_order(modifiedPrice, order.id, order.side, order.quantity, sideLevels);
+		add_order(
+			incoming.side == Side::SELL ? -modifiedPrice : modifiedPrice,
+			order.id,
+			order.side,
+			order.quantity,
+			sideLevels
+		);
 	}
 
 	return matchCount;
 }
 
 // Templated helper to cancel an order within a given orders map.
-inline __attribute((always_inline, hot)) void modify_order_in_book(
-	PriceLevel& level,
-	Order& order,
-	QuantityType new_quantity
-) noexcept
+// inline __attribute((always_inline, hot))
+void modify_order_in_book(PriceLevel& level, Order& order, QuantityType new_quantity) noexcept
 {
 	level.volume += (new_quantity - order.quantity);
 	if (new_quantity != 0) [[likely]]
@@ -189,7 +183,8 @@ void modify_order_by_id(Orderbook& orderbook, IdType order_id, QuantityType new_
 		order.quantity = new_quantity; // Update quantity in orders array
 }
 
-inline Order lookup_order_in_book(const Orders& orders, IdType order_id) noexcept
+// inline
+Order lookup_order_in_book(const Orders& orders, IdType order_id) noexcept
 {
 	return orders[order_id];
 }
@@ -218,7 +213,6 @@ Order lookup_order_by_id(Orderbook& orderbook, IdType order_id)
 		throw std::runtime_error("Order not found");
 
 	return lookup_order_in_book(orderbook.orders, order_id);
-
 }
 
 bool order_exists(Orderbook& orderbook, IdType order_id)

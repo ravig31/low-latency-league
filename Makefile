@@ -27,7 +27,10 @@ benchmark:
 record:
 	$(CXX) $(CXXFLAGS) -fPIC -c engine.cpp -o engine.o
 	$(CXX) $(CXXFLAGS) -shared -o engine.so engine.o
-	perf record -F 299 $(PERFFLAGS) lll-bench $(MAKEFILE_DIR)engine.so -d 1
+	DATE_SUFFIX=$(shell date +%m%d_%H%M%S); \
+	BENCHMARK_FILE=records/records_$$DATE_SUFFIX.data; \
+	perf record -F 100 $(PERFFLAGS) -o $$BENCHMARK_FILE lll-bench $(MAKEFILE_DIR)engine.so -d 1
+
 
 flame:
 	$(CXX) $(CXXFLAGS) -fPIC -c engine.cpp -o engine.o

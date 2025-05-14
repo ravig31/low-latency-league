@@ -6,6 +6,7 @@
 #include <bitset>
 #include <functional>
 #include <cstdint>
+#include <memory>
 #include <memory_resource>
 #include <span>
 #include <vector>
@@ -37,38 +38,38 @@ struct PriceLevel
 {
 
 	uint32_t volume = 0;
-	CircularBuffer<IdType> orders;
+	std::unique_ptr<CircularBuffer<IdType>> orders;
 
 	inline void add_order(IdType order_id, QuantityType quantity)
 	{
 		volume += quantity;
-		orders.push_back(order_id);
+		orders->push_back(order_id);
 	}
 
 	inline void fill_front_order(QuantityType quantity)
 	{
 		volume -= quantity;
-		orders.pop_front();
+		orders->pop_front();
 	}
 
 	inline void find_and_remove_order(IdType order_id)
 	{
-		auto it = std::find(orders.begin(), orders.end(), order_id);
-		if (it == orders.end())
+		auto it = std::find(orders->begin(), orders->end(), order_id);
+		if (it == orders->end())
 			throw std::runtime_error("Order id does not exist in level");
 
-		orders.erase(it);
+		orders->erase(it);
 	}
 
 	PriceLevel()
 		: volume(0)
-		, orders(MAX_ORDERS_PER_LEVEL)
+		, orders(std::make_unique<CircularBuffer<IdType>>(MAX_ORDERS_PER_LEVEL))
 	{
 	}
 
 	PriceLevel(IdType order_id, QuantityType quantity)
 		: volume(0)
-		, orders(MAX_ORDERS_PER_LEVEL)
+		, orders(std::make_unique<CircularBuffer<IdType>>(MAX_ORDERS_PER_LEVEL))
 	{
 		add_order(order_id, quantity);
 	}
@@ -78,7 +79,6 @@ using Levels = std::pmr::vector<std::pair<LevelPriceType, PriceLevel>>;
 using LevelSpan = std::span<std::pair<PriceType, PriceLevel>>;
 using Orders = std::array<Order, MAX_ORDERS>;
 using OrdersActive = std::bitset<MAX_ORDERS>;
-using Cond = std::function<bool(LevelPriceType, LevelPriceType)>;
 
 // You CAN and SHOULD change this
 struct Orderbook
