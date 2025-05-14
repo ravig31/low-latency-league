@@ -1,15 +1,11 @@
 #pragma once
 
 #include "circular_buffer.h"
+#include "sorted_array.h"
 
 #include <array>
 #include <bitset>
-#include <functional>
 #include <cstdint>
-#include <memory>
-#include <memory_resource>
-#include <span>
-#include <vector>
 
 enum class Side : uint8_t
 {
@@ -23,8 +19,11 @@ using LevelPriceType = int16_t;
 using QuantityType = uint16_t;
 using VolumeType = uint32_t;
 
-constexpr uint16_t MAX_ORDERS = 10'000;
-constexpr uint16_t MAX_ORDERS_PER_LEVEL = 256;
+static constexpr uint16_t MAX_ORDERS = 10'000;
+static constexpr uint16_t MAX_ORDERS_PER_LEVEL = 32;
+static constexpr uint16_t MAX_NUM_PRICES = 1024;
+static constexpr uint16_t BASE_PRICE = 3456;
+
 // You CANNOT change this
 struct Order
 {
@@ -34,83 +33,41 @@ struct Order
 	Side side;
 };
 
-struct PriceLevel
-{
+using PriceLevels = SortedFixedArray<LevelPriceType, MAX_NUM_PRICES>;
+using OrderLevels = std::array<CircularBuffer<IdType, MAX_ORDERS_PER_LEVEL>, MAX_NUM_PRICES>;
+using Volumes = std::array<VolumeType[2], MAX_NUM_PRICES>;
 
-	uint32_t volume = 0;
-	std::unique_ptr<CircularBuffer<IdType>> orders;
-
-	inline void add_order(IdType order_id, QuantityType quantity)
-	{
-		volume += quantity;
-		orders->push_back(order_id);
-	}
-
-	inline void fill_front_order(QuantityType quantity)
-	{
-		volume -= quantity;
-		orders->pop_front();
-	}
-
-	inline void find_and_remove_order(IdType order_id)
-	{
-		auto it = std::find(orders->begin(), orders->end(), order_id);
-		if (it == orders->end())
-			throw std::runtime_error("Order id does not exist in level");
-
-		orders->erase(it);
-	}
-
-	PriceLevel()
-		: volume(0)
-		, orders(std::make_unique<CircularBuffer<IdType>>(MAX_ORDERS_PER_LEVEL))
-	{
-	}
-
-	PriceLevel(IdType order_id, QuantityType quantity)
-		: volume(0)
-		, orders(std::make_unique<CircularBuffer<IdType>>(MAX_ORDERS_PER_LEVEL))
-	{
-		add_order(order_id, quantity);
-	}
-};
-
-using Levels = std::pmr::vector<std::pair<LevelPriceType, PriceLevel>>;
-using LevelSpan = std::span<std::pair<PriceType, PriceLevel>>;
-using Orders = std::array<Order, MAX_ORDERS>;
-using OrdersActive = std::bitset<MAX_ORDERS>;
+using OrderStore = std::array<Order, MAX_ORDERS>;
+using OrderBitSet = std::bitset<MAX_ORDERS>;
 
 // You CAN and SHOULD change this
-struct Orderbook
+struct alignas(64) Orderbook
 {
-	alignas(64) char buffer[512 * 1024];
-	std::pmr::monotonic_buffer_resource resource{buffer, sizeof(buffer)};
+	alignas(64) SortedFixedArray<LevelPriceType, MAX_NUM_PRICES> buyLevels{};
+	alignas(64) std::array<CircularBuffer<IdType, MAX_ORDERS_PER_LEVEL>, MAX_NUM_PRICES> buyIds{};
 
-	std::pmr::vector<std::pair<LevelPriceType, PriceLevel>> buyLevels{&resource};
-	std::pmr::vector<std::pair<LevelPriceType, PriceLevel>> sellLevels{&resource};
+	alignas(64) SortedFixedArray<LevelPriceType, MAX_NUM_PRICES> sellLevels{};
+	alignas(64) std::array<CircularBuffer<IdType, MAX_ORDERS_PER_LEVEL>, MAX_NUM_PRICES> sellIds{};
 
-	std::array<Order, MAX_ORDERS> orders;
-	std::bitset<MAX_ORDERS> ordersActive;
+	alignas(64) std::array<VolumeType[2], MAX_NUM_PRICES> volumes{};
 
-	Orderbook()
-		: buyLevels()
-		, sellLevels{}
-	{
-		buyLevels.reserve(256);
-		sellLevels.reserve(256);
-	}
+	alignas(64) std::array<Order, MAX_ORDERS> orders{};
+	alignas(64) std::bitset<MAX_ORDERS> ordersActive{};
 };
 
 extern "C"
 {
-
 	// Takes in an incoming order, matches it, and returns the number of matches
 	// Partial fills are valid
 
 	uint32_t match_order(Orderbook& orderbook, const Order& incoming) noexcept;
 
 	// Sets the new quantity of an order. If new_quantity==0, removes the order
-	void modify_order_by_id(Orderbook& orderbook, IdType order_id, QuantityType new_quantity) noexcept;
+	void modify_order_by_id(
+		Orderbook& orderbook,
+		IdType order_id,
+		QuantityType new_quantity
+	) noexcept;
 
 	// Returns total resting volume at a given price point
 	uint32_t get_volume_at_level(Orderbook& orderbook, Side side, PriceType price) noexcept;

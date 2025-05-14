@@ -1,5 +1,5 @@
 CXX = g++
-CXXFLAGS = -std=c++20 -Wall -Wextra -O2
+CXXFLAGS =  -std=c++20 -Wall -Wextra -Ofast -march=native -flto -mtune=native -funroll-loops -ffast-math -fomit-frame-pointer -fprefetch-loop-arrays -falign-functions=64 -falign-loops=64 -fno-stack-protector -fno-math-errno -fstrict-aliasing -fno-semantic-interposition -finline-functions -finline-limit=1000 -fno-plt
 PERFFLAGS = -B -e task-clock,context-switches,cpu-migrations,page-faults,cycles,instructions,branches,branch-misses,cache-references,cache-misses,L1-dcache-loads,L1-icache-loads,L1-icache-load-misses,LLC-loads,LLC-load-misses
 MAKEFILE_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 all: test
