@@ -3,9 +3,9 @@
 
 #include <cstdint>
 #include <array>
+#include <cstddef> 
 
-
-template <typename T, std::size_t Capacity> class CircularBuffer
+template <typename T, size_t Capacity> class CircularBuffer
 {
 	static_assert(Capacity > 0, "Invalid capacity");
   private:
