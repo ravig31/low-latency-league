@@ -20,7 +20,7 @@ using QuantityType = uint16_t;
 using VolumeType = uint32_t;
 
 static constexpr uint16_t MAX_ORDERS = 10'000;
-static constexpr uint16_t MAX_ORDERS_PER_LEVEL = 32;
+static constexpr uint16_t MAX_ORDERS_PER_LEVEL = 20;
 static constexpr uint16_t MAX_NUM_PRICES = 1024;
 static constexpr uint16_t BASE_PRICE = 3456;
 

@@ -1,5 +1,5 @@
 CXX = g++
-CXXFLAGS =  -std=c++20 -Wall -Wextra -Ofast -march=native -flto -mtune=native -funroll-loops -ffast-math -fomit-frame-pointer -fprefetch-loop-arrays -falign-functions=64 -falign-loops=64 -fno-stack-protector -fno-math-errno -fstrict-aliasing -fno-semantic-interposition -finline-functions -finline-limit=1000 -fno-plt
+CXXFLAGS =  -std=c++20 -Wall -Wextra -Ofast -ffast-math -flto -march=native -mtune=native -fomit-frame-pointer -fprefetch-loop-arrays -fno-plt -finline-functions -finline-limit=500
 PERFFLAGS = -B -e task-clock,context-switches,cpu-migrations,page-faults,cycles,instructions,branches,branch-misses,cache-references,cache-misses,L1-dcache-loads,L1-icache-loads,L1-icache-load-misses,LLC-loads,LLC-load-misses
 MAKEFILE_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 all: test
@@ -9,7 +9,7 @@ script: script.cpp
 
 	
 test: tests.cpp
-	$(CXX) $(CXXFLAGS) -g -o tests tests.cpp engine.cpp
+	$(CXX) -std=c++20 -Wall -Wextra -g -g -o tests tests.cpp engine.cpp
 	./tests
 
 submit: engine.cpp
@@ -30,7 +30,6 @@ record:
 	DATE_SUFFIX=$(shell date +%m%d_%H%M%S); \
 	BENCHMARK_FILE=records/records_$$DATE_SUFFIX.data; \
 	perf record -F 100 $(PERFFLAGS) -o $$BENCHMARK_FILE lll-bench $(MAKEFILE_DIR)engine.so -d 1
-
 
 flame:
 	$(CXX) $(CXXFLAGS) -fPIC -c engine.cpp -o engine.o

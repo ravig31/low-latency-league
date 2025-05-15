@@ -9,31 +9,29 @@
 // It is INTENTIONALLY suboptimal
 // You are encouraged to rewrite as much or as little as you'd like
 
-inline __attribute__((always_inline, hot)) bool add_order(
-	LevelPriceType modPrice,
-	Order& order,
-	PriceLevels& priceLevels,
-	OrderLevels& orderLevels,
-	Volumes& volumes
-) noexcept
-{
-	if (orderLevels[order.price - BASE_PRICE].push_back(order.id))
-	{
-		priceLevels.insert(modPrice);
-		volumes[order.price - BASE_PRICE][static_cast<size_t>(order.side)] += order.quantity;
-		return true;
-	}
-	return false;
-}
+// inline __attribute__((always_inline, hot))
+// bool add_order(
+// 	LevelPriceType modPrice,
+// 	Order& order,
+// 	PriceLevels& priceLevels,
+// 	OrderLevels& orderLevels,
+// 	Volumes& volumes
+// ) noexcept
+// {
+
+// 	return false;
+// }
 
 inline __attribute__((always_inline, hot)) uint32_t process_orders(
-	LevelPriceType price,
+	LevelPriceType compPrice,
 	Order& order,
-	PriceLevels& priceLevels,
-	OrderLevels& orderLevels,
+	PriceLevels& mPriceLevels,
+	OrderLevels& mOrderLevels,
 	Volumes& volumes,
 	OrderStore& orders,
-	OrderBitSet& ordersActive
+	OrderBitSet& ordersActive,
+	PriceLevels& sPriceLevels,
+	OrderLevels& sOrderLevels
 ) noexcept
 {
 	uint32_t matchCount = 0;
@@ -42,22 +40,22 @@ inline __attribute__((always_inline, hot)) uint32_t process_orders(
 	{
 
 		// if no prices to match or cannot match at best price
-		if (priceLevels.empty() || price < priceLevels.back()) [[unlikely]]
+		if (mPriceLevels.empty() || compPrice < mPriceLevels.back()) [[unlikely]]
 			break;
 
-		size_t priceIdx = abs(priceLevels.back()) - BASE_PRICE;
+		size_t priceIdx = abs(mPriceLevels.back()) - BASE_PRICE;
 		VolumeType& volAtLevel = volumes[priceIdx][!static_cast<size_t>(order.side)];
-		auto& ordersAtLevel = orderLevels[priceIdx];
+		auto& ordersAtLevel = mOrderLevels[priceIdx];
 
 		while (!ordersAtLevel.empty() && order.quantity > 0)
 		{
 			IdType counterId = ordersAtLevel.front();
-			if (!ordersActive[counterId])
+			if (!ordersActive[counterId]) [[unlikely]]
 			{
 				ordersAtLevel.pop_front();
-				if (orderLevels.empty())
+				if (mOrderLevels.empty())
 				{
-					priceLevels.erase(price);
+					mPriceLevels.pop_back();
 					break;
 				}
 				continue;
@@ -79,9 +77,21 @@ inline __attribute__((always_inline, hot)) uint32_t process_orders(
 
 		if (ordersAtLevel.empty()) [[unlikely]]
 		{
-			priceLevels.erase(priceLevels.back());
+			mPriceLevels.pop_back();
 		}
 	}
+
+	// Add order
+	if (order.quantity > 0) [[unlikely]]
+	{
+		if (sOrderLevels[order.price - BASE_PRICE].push_back(order.id))
+		{
+			sPriceLevels.insert(-compPrice);
+			volumes[order.price - BASE_PRICE][static_cast<size_t>(order.side)] += order.quantity;
+			ordersActive.set(order.id);
+			orders[order.id] = order;
+		};
+	};
 	return matchCount;
 }
 
@@ -89,29 +99,20 @@ uint32_t match_order(Orderbook& orderbook, const Order& incoming) noexcept
 {
 	uint32_t matchCount = 0;
 	Order order = incoming;
+	const bool isSell = static_cast<bool>(order.side);
 	LevelPriceType modifiedPrice = static_cast<int16_t>(order.price);
 
 	matchCount = process_orders(
-		order.side == Side::SELL ? -modifiedPrice : modifiedPrice,
+		isSell ? -modifiedPrice : modifiedPrice,
 		order,
-		order.side == Side::SELL ? orderbook.buyLevels : orderbook.sellLevels,
-		order.side == Side::SELL ? orderbook.buyIds : orderbook.sellIds,
+		isSell ? orderbook.buyLevels : orderbook.sellLevels,
+		isSell ? orderbook.buyIds : orderbook.sellIds,
 		orderbook.volumes,
 		orderbook.orders,
-		orderbook.ordersActive
+		orderbook.ordersActive,
+		isSell ? orderbook.sellLevels : orderbook.buyLevels,
+		isSell ? orderbook.sellIds : orderbook.buyIds
 	);
-	if (order.quantity > 0) [[unlikely]]
-	{
-		add_order(
-			order.side == Side::BUY ? -modifiedPrice : modifiedPrice,
-			order,
-			order.side == Side::BUY ? orderbook.buyLevels : orderbook.sellLevels,
-			order.side == Side::BUY ? orderbook.buyIds : orderbook.sellIds,
-			orderbook.volumes
-		);
-		orderbook.ordersActive.set(order.id);
-		orderbook.orders[order.id] = order;
-	}
 
 	return matchCount;
 }
@@ -122,10 +123,13 @@ void modify_order_by_id(Orderbook& orderbook, IdType order_id, QuantityType new_
 	{
 		return;
 	}
+
 	auto& order = orderbook.orders[order_id];
 	orderbook.volumes[order.price][static_cast<size_t>(order.side)] +=
 		(new_quantity - order.quantity);
 
+	// orderbook.ordersActive[order_id] = new_quantity == 0 ? false : true;
+	// order.quantity = new_quantity == 0 ? order.quantity : new_quantity;
 	if (new_quantity == 0) [[likely]]
 	{
 		orderbook.ordersActive.reset(order_id);
