@@ -87,31 +87,5 @@ public:
     return true;
   }
 
-  // inline __attribute__((always_inline, hot)) bool erase(const T& value)
-  // noexcept
-  // {
-  // 	for (std::size_t i = count; i > 0; --i)
-  // 	{
-  // 		if (data[i] == value)
-  // 		{
-  // 			if (i + 16 < count)
-  // 			{ // Prefetch the destination area for write
-  // 				__builtin_prefetch(&data[i + 16], 1, 1); //
-  // Prefetch for write, low locality
-  // 			}
-  // 			std::move(data.begin() + i + 1, data.begin() + count,
-  // data.begin() + i);
-  // 			--count;
-  // 			return true;
-  // 		}
-  // 		// Early termination: if we've gone past where the value could
-  // be
-  // 		// (due to decreasing sort order)
-  // 		if (data[i] > value)
-  // 			break;
-  // 	}
-  // 	return false;
-  // }
-
   void clear() { count = 0; }
 };
