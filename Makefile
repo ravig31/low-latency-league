@@ -1,6 +1,6 @@
 CXX = g++
 CXXFLAGS =  -std=c++20 -Wall -Wextra -Ofast -ffast-math -flto -march=native -mtune=native -fomit-frame-pointer -fprefetch-loop-arrays -fno-plt -finline-functions -finline-limit=500
-PERFFLAGS = -B -e task-clock,context-switches,cpu-migrations,page-faults,cycles,instructions,branches,branch-misses,cache-references,cache-misses,L1-dcache-loads,L1-dcache-load-misses,L1-icache-loads,L1-icache-load-misses,LLC-loads,LLC-load-misses
+PERFFLAGS = -B -e task-clock,context-switches,cpu-migrations,page-faults,cycles,instructions,branches,branch-misses,cache-references,cache-misses,L1-dcache-loads,L1-dcache-load-misses,L1-icache-loads,L1-icache-load-misses
 MAKEFILE_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
 all: test
