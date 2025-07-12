@@ -1,13 +1,14 @@
 
 #pragma once
 
-#include <cstdint>
 #include <array>
-#include <cstddef> 
+#include <cstddef>
+#include <cstdint>
 
 template <typename T, size_t Capacity> class CircularBuffer
 {
 	static_assert(Capacity > 0, "Invalid capacity");
+
   private:
 	std::array<T, Capacity> buffer_{};
 	uint64_t head = 0;
@@ -28,6 +29,4 @@ template <typename T, size_t Capacity> class CircularBuffer
 	}
 
 	inline __attribute__((always_inline, hot)) void pop_front() { ++tail; }
-
-
 };
