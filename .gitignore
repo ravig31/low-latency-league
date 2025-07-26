@@ -10,3 +10,4 @@ perf.*
 *.svg
 *.dSYM
 .cache
+compile_commands.json
