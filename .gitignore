@@ -8,3 +8,5 @@ script
 records/*
 perf.*
 *.svg
+*.dSYM
+.cache

@@ -1,0 +1,36 @@
+[
+  {
+    "arguments": [
+      "/usr/bin/g++",
+      "-c",
+      "-std=c++20",
+      "-Wall",
+      "-Wextra",
+      "-g",
+      "-g",
+      "-o",
+      "tests",
+      "tests.cpp"
+    ],
+    "directory": "/Users/ravindugamage/main/low-latency-league",
+    "file": "/Users/ravindugamage/main/low-latency-league/tests.cpp",
+    "output": "/Users/ravindugamage/main/low-latency-league/tests"
+  },
+  {
+    "arguments": [
+      "/usr/bin/g++",
+      "-c",
+      "-std=c++20",
+      "-Wall",
+      "-Wextra",
+      "-g",
+      "-g",
+      "-o",
+      "tests",
+      "engine.cpp"
+    ],
+    "directory": "/Users/ravindugamage/main/low-latency-league",
+    "file": "/Users/ravindugamage/main/low-latency-league/engine.cpp",
+    "output": "/Users/ravindugamage/main/low-latency-league/tests"
+  }
+]
