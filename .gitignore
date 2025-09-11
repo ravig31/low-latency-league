@@ -4,7 +4,6 @@ engine.o
 benchmarks/*
 script
 .vscode/*
-.clang-format
 records/*
 perf.*
 *.svg
