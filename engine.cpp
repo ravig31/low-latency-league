@@ -9,119 +9,109 @@
 // This is an example correct implementation
 // It is INTENTIONALLY suboptimal
 // You are encouraged to rewrite as much or as little as you'd like
-// inline __attribute__((always_inline, hot))
-uint32_t process_orders(LevelPriceType compPrice, Order &order,
-                        PriceLevels &mPriceLevels, OrderLevels &mOrderLevels,
-                        Volumes &volumes, OrderStore &orders,
-                        OrderBitSet &ordersActive, PriceLevels &sPriceLevels,
-                        OrderLevels &sOrderLevels) noexcept {
-    uint32_t matchCount = 0;
+inline __attribute__((always_inline, hot)) uint32_t process_orders(
+    Order &order, OBSide &x_levels, OBSide &s_levels, Volumes &volumes,
+    OrderStore &orders, OrderBitSet &_orders_active) noexcept {
 
+    uint32_t match_count = 0;
     while (order.quantity > 0) {
-        // if no prices to match or cannot match at best price
-        if (mPriceLevels.empty() || compPrice < mPriceLevels.back())
-            [[unlikely]]
+
+        if (!x_levels.can_fill(order)) [[unlikely]]
             break;
 
-        size_t priceIdx = abs(mPriceLevels.back()) - BASE_PRICE;
-        VolumeType &volAtLevel =
-            volumes[priceIdx][!static_cast<size_t>(order.side)];
-        auto &ordersAtLevel = mOrderLevels[priceIdx];
+        auto [orders_at_level, best_price] = x_levels.get_best();
 
-        while (!ordersAtLevel.empty() && order.quantity > 0) {
-            IdType counterId = ordersAtLevel.front();
-            if (!ordersActive[counterId]) [[unlikely]] {
-                ordersAtLevel.pop_front();
-                if (mOrderLevels.empty()) {
-                    mPriceLevels.pop_back();
+        VolumeType &vol_at_level =
+            volumes[best_price][!static_cast<size_t>(order.side)];
+
+        while (!orders_at_level->empty() && order.quantity > 0) {
+            IdType counter_order_id = orders_at_level->front();
+
+            // order was cancelled previously remove and continue
+            if (!_orders_active[counter_order_id]) [[unlikely]] {
+                orders_at_level->pop_front();
+                if (orders_at_level->empty()) {
+                    x_levels.remove_best();
                     break;
                 }
                 continue;
             }
-            auto &counterOrder = orders[counterId];
+            auto &counter_order = orders[counter_order_id];
 
             QuantityType trade =
-                std::min(order.quantity, counterOrder.quantity);
+                std::min(order.quantity, counter_order.quantity);
             order.quantity -= trade;
-            counterOrder.quantity -= trade;
-            volAtLevel -= trade; // Decrement total volume at level
+            counter_order.quantity -= trade;
+            vol_at_level -= trade; // Decrement total volume at level
 
-            if (counterOrder.quantity == 0) [[likely]] {
-                ordersActive.reset(counterId);
-                ordersAtLevel.pop_front();
+            if (counter_order.quantity == 0) [[likely]] {
+                _orders_active.reset(counter_order_id);
+                orders_at_level->pop_front();
             }
-            ++matchCount;
+            ++match_count;
         }
 
-        if (ordersAtLevel.empty()) [[unlikely]] {
-            mPriceLevels.pop_back();
+        if (orders_at_level->empty()) [[unlikely]] {
+            x_levels.remove_best();
         }
     }
 
-    // Add order
+    // Add order to corresponding side if partially filled
     if (order.quantity > 0) [[unlikely]] {
-        if (sOrderLevels[order.price - BASE_PRICE].push_back(order.id)) {
-            sPriceLevels.insert(-compPrice);
-            volumes[order.price - BASE_PRICE]
-                   [static_cast<size_t>(order.side)] += order.quantity;
-            ordersActive.set(order.id);
-            orders[order.id] = order;
-        };
+        s_levels.add_order(order);
+        volumes[order.price - BASE_PRICE][static_cast<size_t>(order.side)] +=
+            order.quantity;
+        _orders_active.set(order.id);
+        orders[order.id] = order;
     };
-    return matchCount;
-}
+    return match_count;
+};
 
 uint32_t match_order(Orderbook &orderbook, const Order &incoming) noexcept {
-    uint32_t matchCount = 0;
+    uint32_t match_count = 0;
     Order order = incoming;
     const bool isSell = static_cast<bool>(order.side);
-    LevelPriceType modifiedPrice = static_cast<int16_t>(order.price);
 
-    matchCount = process_orders(
-        isSell ? -modifiedPrice : modifiedPrice, order,
-        isSell ? orderbook.buyLevels : orderbook.sellLevels,
-        isSell ? orderbook.buyIds : orderbook.sellIds, orderbook.volumes,
-        orderbook.orders, orderbook.ordersActive,
-        isSell ? orderbook.sellLevels : orderbook.buyLevels,
-        isSell ? orderbook.sellIds : orderbook.buyIds);
+    match_count = process_orders(
+        order, isSell ? orderbook._buy_levels : orderbook._sell_levels,
+        isSell ? orderbook._sell_levels : orderbook._buy_levels,
+        orderbook._volumes, orderbook._orders, orderbook._orders_active);
 
-    return matchCount;
+    return match_count;
 }
 
 void modify_order_by_id(Orderbook &orderbook, IdType order_id,
                         QuantityType new_quantity) noexcept {
-    if (!orderbook.ordersActive[order_id]) [[unlikely]] {
+    if (!orderbook._orders_active[order_id]) [[unlikely]] {
         return;
     }
 
-    auto &order = orderbook.orders[order_id];
-    orderbook.volumes[order.price][static_cast<size_t>(order.side)] +=
+    auto &order = orderbook._orders[order_id];
+    orderbook._volumes[order.price][static_cast<uint8_t>(order.side)] +=
         (new_quantity - order.quantity);
 
-    // orderbook.ordersActive[order_id] = new_quantity == 0 ? false : true;
-    // order.quantity = new_quantity == 0 ? order.quantity : new_quantity;
     if (new_quantity == 0) [[likely]] {
-        orderbook.ordersActive.reset(order_id);
+        orderbook._orders_active.reset(order_id);
     } else [[unlikely]]
         order.quantity = new_quantity; // Update quantity in orders array
 }
 
 uint32_t get_volume_at_level(Orderbook &orderbook, Side side,
                              PriceType price) noexcept {
-    return orderbook.volumes[price][static_cast<size_t>(side)];
+    return orderbook._volumes[price][static_cast<uint8_t>(side)];
 }
 
 // Functions below here don't need to be performant. Just make sure they're
 // correct
 Order lookup_order_by_id(Orderbook &orderbook, IdType order_id) {
-    if (!orderbook.ordersActive[order_id])
+    if (!orderbook._orders_active[order_id])
         throw std::runtime_error("Order not found");
 
-    return orderbook.orders[order_id];
+    return orderbook._orders[order_id];
 }
 
 bool order_exists(Orderbook &orderbook, IdType order_id) {
-    return orderbook.ordersActive[order_id];
+    return orderbook._orders_active[order_id];
 }
 
 Orderbook *create_orderbook() { return new Orderbook; }
