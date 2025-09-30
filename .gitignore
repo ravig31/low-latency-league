@@ -10,3 +10,4 @@ perf.*
 *.dSYM
 .cache
 compile_commands.json
+*.job
