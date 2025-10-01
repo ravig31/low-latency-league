@@ -85,7 +85,7 @@ Why the `ReverseSortedArray`?
 
 ## Why this approach?
 
-Like mentioned, real limit order books are not uniformly populated across the theoretical price range. Resting liquidity tends to cluster (or “bunch”) in a relatively narrow band around the prevailing mid / last traded price. Far‑away price levels are either empty or thin. This empirical skew lets us bias the in‑memory layout toward:
+Like mentioned, real limit order books are not uniformly populated across the theoretical price range. Resting liquidity tends to bunch in a relatively narrow band around the prevailing market price. Far‑away price levels are either empty or thin. This empirical skew lets us bias the in‑memory layout toward:
 
 1. Fast-path locality:  
    - The most frequently touched data (best level price encoding, per‑price FIFO of order IDs, per‑level volume) lives in a small, tightly packed, contiguous set of cache lines.
@@ -93,12 +93,11 @@ Like mentioned, real limit order books are not uniformly populated across the th
 
 2. Cheap sparse coverage:  
    - A fixed-capacity array for all possible prices looks wasteful in worst-case theory, but **in practice the inactive tail is never touched**, so it imposes near-zero runtime cost (just reserved address space).
-   - No dynamic metadata or node allocations are paid for empty regions; we avoid pointer chasing entirely.
+   - No dynamic metadata or node allocations are paid for empty regions, we avoid pointer chasing entirely.
 
-
-5. Sign-normalized unified best access:  
+5. Sign-normalised unified best access:  
    - Converging both BUY and SELL best-level discovery to a single `back()` access **removes a side branch exactly where latency matters most**.
-   - The clustered nature of activity around the top-of-book amplifies the benefit: that code path executes for the majority of events.
+   - The **clustered nature** of activity around the top-of-book **amplifies the benefit**: that code path executes for the majority of events.
 
 ## Limitations & Future Improvements
 - Price range fixed at compile time (MAX_NUM_PRICES). A sparse market with very wide price dispersion would waste memory.
