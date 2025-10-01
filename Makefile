@@ -10,12 +10,12 @@ test: tests.cpp
 	$(CXX) -std=c++20 -Wall -Wextra -g -o tests tests.cpp engine.cpp
 	./tests
 	
-submit: engine.cpp
+benchmark: engine.cpp
 	$(CXX) $(CXXFLAGS) -fPIC -c engine.cpp -o engine.o
 	$(CXX) $(CXXFLAGS) -shared -o engine.so engine.o
 	./lll-bench $(MAKEFILE_DIR)engine.so -d 1
 
-benchmark:
+perf:
 	$(CXX) $(CXXFLAGS) -fPIC -c engine.cpp -o engine.o
 	$(CXX) $(CXXFLAGS) -shared -o engine.so engine.o
 	perf stat ${PERFFLAGS} ./lll-bench $(MAKEFILE_DIR)engine.so -d 1 

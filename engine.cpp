@@ -27,7 +27,7 @@ inline __attribute__((always_inline, hot)) uint32_t process_orders(
         while (!orders_at_level->empty() && order.quantity > 0) {
             IdType counter_order_id = orders_at_level->front();
 
-            // order was cancelled previously remove and continue
+            // order was cancelled previously, remove and continue
             if (!_orders_active[counter_order_id]) [[unlikely]] {
                 orders_at_level->pop_front();
                 if (orders_at_level->empty()) {
