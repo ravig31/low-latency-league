@@ -1,8 +1,10 @@
-My implementation for [NUFT's Low Latency League matching engine competition](https://github.com/northwesternfintech/low-latency-league). Most of the ideas for this came from this great [CppCon video](https://www.youtube.com/watch?v=sX2nF1fW7kI&t=1503s&pp=ygUOY3BwY29uIG9wdGl2ZXLSBwkJ9gkBhyohjO8%3D).
+# NUFT Low-latency-league 
+
+My implementation/optimisations for [NUFT's Low Latency League](https://github.com/northwesternfintech/low-latency-league) matching engine competition. Most of the ideas for this came from this great [CppCon video](https://www.youtube.com/watch?v=sX2nF1fW7kI&t=1503s&pp=ygUOY3BwY29uIG9wdGl2ZXLSBwkJ9gkBhyohjO8%3D).
 
 The approach centres around the statistical reality that “hot” price levels form a narrow, dense band. By making that locality assumption explicit, we can trade wide coverage for consistently low cache miss rates, branch predictability, and allocation-free steady-state behavior. All of which dominate latency in a bursty, center of book workload.
 
-**Runing the code**
+### Running the code
 
 Note the benchmark file is compiled only for `x86_64` Linux. In addtion, requires you to have `PAPI` and `perf` installed and available in your path.
 ```Makefile
