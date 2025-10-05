@@ -71,7 +71,7 @@ Core components (SoA split):
 - Global order store: `std::array<Order, MAX_ORDERS>`
   - Dense indexable storage
 - Active mask: `std::bitset<MAX_ORDERS>`
-  - Lazy cancellation: mark inactive; skip during matching
+  - Lazy cancellation: mark inactive, skip during matching
 - Per‑price, per‑side volume: `std::array<VolumeType[2], MAX_NUM_PRICES>`
   - O(1) volume retrieval
 
