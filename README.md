@@ -39,7 +39,7 @@ The following intermediate approaches were explored (not all appear in the curre
 4. Final design (current code)
    - Replace dynamic structures with fixed‑capacity, cache‑friendly, SoA style layout
 
-Tradeoff: the real downside with a fixed range is the price coverage, however for the sake of the benchmark range it works.
+Trade-off: the real downside with a fixed range is the price coverage, however for the sake of the benchmark range it works.
 
 ## Optimisation 2 - Unified Matching via Price Sign Normalisation
 When inserting:
