@@ -91,7 +91,7 @@ Like mentioned, real limit order books are not uniformly populated across the th
 
 1. Fast-path locality:  
    - The most frequently touched data (best level price encoding, per‑price FIFO of order IDs, per‑level volume) lives in a small, tightly packed, **contiguous set of cache lines**.
-   - Because new aggressive orders almost always interact with the current best (or a few adjacent levels), the **working set stays hot** without needing complex adaptive indexing.
+   - Because new aggressive orders almost always interact with the current best (or a few adjacent levels), the **working set stays hot**
 
 2. Cheap sparse coverage:  
    - A fixed-capacity array for all possible prices looks wasteful in worst-case theory, but **in practice the inactive tail is never touched**, so it's really just reserved address space.
@@ -99,7 +99,7 @@ Like mentioned, real limit order books are not uniformly populated across the th
 
 5. Sign-normalised unified best access:  
    - Converging both BUY and SELL best-level discovery to a single `back()` access **removes a side branch exactly where latency matters most**.
-   - The **clustered nature** of activity around the top-of-book **amplifies the benefit**: that code path executes for the majority of events.
+   - The **clustered nature** of activity around the top-of-book **amplifies the benefit**.
 
 ## Limitations & Future Improvements
 - Price range fixed at compile time (MAX_NUM_PRICES). A sparse market with very wide price dispersion would waste memory.
