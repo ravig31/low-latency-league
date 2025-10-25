@@ -39,6 +39,8 @@ The following intermediate approaches were explored (not all appear in the curre
 4. Final design (current code)
    - Replace dynamic structures with fixed‑capacity, cache‑friendly, SoA style layout
 
+Tradeoff: the real downside with a fixed range is the price coverage, however for the sake of the benchmark range it works.
+
 ## Optimisation 2 - Unified Matching via Price Sign Normalisation
 When inserting:
 ```cpp
@@ -52,7 +54,7 @@ With the array sorted in strictly decreasing order:
 - Eliminates side‑specific comparison branches in hot path
 - Fits safely in `int16_t` given configured price domain (ensure benchmark constraints keep prices < 32768)
 
-Trade‑off: Slight readability cost; mitigated by comments in code.
+Trade‑off: The performance increase is not all that signigicant, and there is a slight readability cost with this approach. Though, for the sake of pure optimisation I decided to include it anyway.
 
 ## Current Implementation
 
@@ -88,12 +90,12 @@ Why the `ReverseSortedArray`?
 Like mentioned, real limit order books are not uniformly populated across the theoretical price range. Resting liquidity tends to bunch in a relatively narrow band around the prevailing market price. Far‑away price levels are either empty or thin. This empirical skew lets us bias the in‑memory layout toward:
 
 1. Fast-path locality:  
-   - The most frequently touched data (best level price encoding, per‑price FIFO of order IDs, per‑level volume) lives in a small, tightly packed, contiguous set of cache lines.
+   - The most frequently touched data (best level price encoding, per‑price FIFO of order IDs, per‑level volume) lives in a small, tightly packed, **contiguous set of cache lines**.
    - Because new aggressive orders almost always interact with the current best (or a few adjacent levels), the **working set stays hot** without needing complex adaptive indexing.
 
 2. Cheap sparse coverage:  
-   - A fixed-capacity array for all possible prices looks wasteful in worst-case theory, but **in practice the inactive tail is never touched**, so it imposes near-zero runtime cost (just reserved address space).
-   - No dynamic metadata or node allocations are paid for empty regions, we avoid pointer chasing entirely.
+   - A fixed-capacity array for all possible prices looks wasteful in worst-case theory, but **in practice the inactive tail is never touched**, so it's really just reserved address space.
+   - No dynamic metadata or node allocations are paid for empty regions, avoiding pointer chasing entirely.
 
 5. Sign-normalised unified best access:  
    - Converging both BUY and SELL best-level discovery to a single `back()` access **removes a side branch exactly where latency matters most**.
