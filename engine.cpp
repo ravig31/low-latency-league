@@ -19,7 +19,7 @@ inline __attribute__((always_inline, hot)) uint32_t process_orders(
         if (!x_levels.can_fill(order)) [[unlikely]]
             break;
 
-        auto [orders_at_level, best_price] = x_levels.get_best();
+        auto [orders_at_level, best_price] = x_levels.get_best_nonempty();
 
         VolumeType &vol_at_level =
             volumes[best_price][!static_cast<size_t>(order.side)];

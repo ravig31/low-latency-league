@@ -42,17 +42,36 @@ struct OBSide {
     DecreasingSortedArray<int16_t, MAX_NUM_PRICES> _prices;
     std::array<OrdQueue, MAX_NUM_PRICES> _orders;
 
-  public:
-    __attribute__((always_inline, hot)) inline std::pair<OrdQueue *, PriceType>
-    get_best() {
-        if (!_prices.empty()) {
-            auto best_price = std::abs(_prices.back()) - BASE_PRICE;
-            return {&_orders[best_price], best_price};
-        }
-        return {nullptr, 0};
+    // BUY (0) => +price
+    // SELL (1) => -price
+    static inline __attribute__((always_inline, hot)) int16_t
+    price_key(PriceType price, Side side) noexcept {
+        int16_t p = static_cast<int16_t>(price);
+        int16_t s = static_cast<int16_t>(side); // 0 or 1
+
+        // key = (p ^ -s) + s
+        // if s=0: (p ^ 0) + 0 = p
+        // if s=1: (p ^ -1) + 1 = ~p + 1 = -p
+        return static_cast<int16_t>((p ^ static_cast<int16_t>(-s)) + s);
     }
 
-    __attribute__((always_inline, hot)) inline void remove_best() {
+    static inline __attribute__((always_inline, hot)) int16_t
+    stored_key(PriceType price, Side side) noexcept {
+        int16_t p = static_cast<int16_t>(price);
+        int16_t s = static_cast<int16_t>(side) ^ 1; // BUY->1, SELL->0
+                                                    //
+        // s=1 => -p, s=0 => +p
+        return static_cast<int16_t>((p ^ static_cast<int16_t>(-s)) + s);
+    }
+
+  public:
+    __attribute__((always_inline, hot)) inline std::pair<OrdQueue *, PriceType>
+    get_best_nonempty() {
+        auto best_price = std::abs(_prices.back()) - BASE_PRICE;
+        return {&_orders[best_price], best_price};
+    }
+
+    __attribute__((always_inline, hot)) inline void remove_best() noexcept {
         _prices.pop_back();
     }
 
@@ -64,20 +83,20 @@ struct OBSide {
        (100) order cannot not be filled (-101 not >= -100). e.g. if buy order
        comparison price is 100 (not negged) and best ask is 101 cannot be filled
        (100 not >= 101)
+    */
+    __attribute__((always_inline, hot)) inline bool
+    can_fill(Order &order) noexcept {
+        if (_prices.empty())
+            return false;
 
-	*/
-    __attribute__((always_inline, hot)) inline bool can_fill(Order &order) {
-        return !_prices.empty() &&
-               (order.side == Side::SELL
-                    ? -1 * static_cast<int16_t>(order.price)
-                    : static_cast<int16_t>(order.price)) >= _prices.back();
+        int16_t key = price_key(order.price, order.side);
+        return key >= _prices.back();
     }
 
-    __attribute__((always_inline, hot)) inline void add_order(Order &order) {
+    __attribute__((always_inline, hot)) inline void
+    add_order(Order &order) noexcept {
         if (_orders[order.price - BASE_PRICE].push_back(order.id)) {
-            _prices.insert(order.side == Side::BUY
-                               ? -1 * static_cast<int16_t>(order.price)
-                               : static_cast<int16_t>(order.price));
+            _prices.insert(stored_key(order.price, order.side));
         }
     }
 };
