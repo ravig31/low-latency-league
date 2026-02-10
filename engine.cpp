@@ -14,8 +14,8 @@ inline __attribute__((always_inline, hot)) uint32_t process_orders(
     OrderStore &orders, OrderBitSet &_orders_active) noexcept {
 
     uint32_t match_count = 0;
-    while (order.quantity > 0) {
 
+    while (order.quantity > 0) {
         if (!x_levels.can_fill(order)) [[unlikely]]
             break;
 
@@ -24,46 +24,65 @@ inline __attribute__((always_inline, hot)) uint32_t process_orders(
         VolumeType &vol_at_level =
             volumes[best_price][!static_cast<size_t>(order.side)];
 
-        while (!orders_at_level->empty() && order.quantity > 0) {
-            IdType counter_order_id = orders_at_level->front();
+        // Trim cancelled orders at the front (keeps the match loop
+        // branch-light).
+        while (!orders_at_level->empty()) {
+            const IdType id = orders_at_level->front();
+            if (_orders_active[id]) [[likely]]
+                break;
+            orders_at_level->pop_front();
+        }
 
-            // order was cancelled previously, remove and continue
-            if (!_orders_active[counter_order_id]) [[unlikely]] {
+        if (orders_at_level->empty()) [[unlikely]]{ 
+            x_levels.remove_best();
+            continue;
+        }
+
+        // Match against active front orders.
+        while (order.quantity > 0 && !orders_at_level->empty()) {
+            const IdType counter_order_id = orders_at_level->front();
+            auto &counter_order = orders[counter_order_id];
+
+            const QuantityType trade =
+                std::min(order.quantity, counter_order.quantity);
+
+            order.quantity -= trade;
+            counter_order.quantity -= trade;
+            vol_at_level -= trade;
+
+            ++match_count;
+
+            // After a trade, at least one side is fully consumed.
+            if (counter_order.quantity == 0) {
+                _orders_active.reset(counter_order_id);
                 orders_at_level->pop_front();
-                if (orders_at_level->empty()) {
+
+                // Trim again: next front may be a cancelled order.
+                while (!orders_at_level->empty()) {
+                    const IdType id = orders_at_level->front();
+                    if (_orders_active[id]) [[likely]]
+                        break;
+                    orders_at_level->pop_front();
+                }
+
+                if (orders_at_level->empty()) [[unlikely]] {
                     x_levels.remove_best();
                     break;
                 }
-                continue;
-            }
-            auto &counter_order = orders[counter_order_id];
-
-            QuantityType trade =
-                std::min(order.quantity, counter_order.quantity);
-            order.quantity -= trade;
-            counter_order.quantity -= trade;
-            vol_at_level -= trade; // Decrement total volume at level
-
-            if (counter_order.quantity == 0) [[likely]] {
-                _orders_active.reset(counter_order_id);
-                orders_at_level->pop_front();
-            }
-            ++match_count;
-        }
-
-        if (orders_at_level->empty()) [[unlikely]] {
-            x_levels.remove_best();
+            } 
+			// If the resting order wasn't depleted, the incoming order must
+			// be.
         }
     }
 
-    // Add order to corresponding side if partially filled
-    if (order.quantity > 0) [[unlikely]] {
+    if (order.quantity > 0) { [[likely]]
         s_levels.add_order(order);
         volumes[order.price - BASE_PRICE][static_cast<size_t>(order.side)] +=
             order.quantity;
         _orders_active.set(order.id);
         orders[order.id] = order;
-    };
+    }
+
     return match_count;
 };
 
