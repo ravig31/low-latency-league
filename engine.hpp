@@ -1,7 +1,7 @@
 #pragma once
 
 #include "circular_buffer.h"
-#include "reverse_array.h"
+#include "decreasing_array.h"
 
 #include <array>
 #include <bitset>
@@ -39,7 +39,7 @@ struct OBSide {
   private:
     using OrdQueue = CircularBuffer<IdType, MAX_ORDERS_PER_LEVEL>;
 
-    ReverseSortedArray<int16_t, MAX_NUM_PRICES> _prices;
+    DecreasingSortedArray<int16_t, MAX_NUM_PRICES> _prices;
     std::array<OrdQueue, MAX_NUM_PRICES> _orders;
 
   public:
@@ -56,13 +56,16 @@ struct OBSide {
         _prices.pop_back();
     }
 
-    // Keeps buy prices negated in the book and sell prices negated in order
-    // for unified comparison logic. Always check if (negged) order price >= best
-    // price in book otherwise order cannot be filled
-    // e.g. if sell order negged price is -99 (99) and best bid is -100 (100) 
-	// order cannot not be filled (-99 < -100).
-    // e.g. if buy order comparison price is 100 and best ask is 101
-    // cannot be filled (100 < 101)
+    /*
+        Keeps buy prices negated in the book and sell prices negated in
+       order for unified comparison logic. Always check if (negged) order price
+       >= best price in book otherwise order cannot be filled e.g. if sell order
+        negged price is -101 (101) and best bid is -100, in the book,
+       (100) order cannot not be filled (-101 not >= -100). e.g. if buy order
+       comparison price is 100 (not negged) and best ask is 101 cannot be filled
+       (100 not >= 101)
+
+	*/
     __attribute__((always_inline, hot)) inline bool can_fill(Order &order) {
         return !_prices.empty() &&
                (order.side == Side::SELL

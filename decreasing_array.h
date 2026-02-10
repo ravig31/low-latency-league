@@ -2,7 +2,10 @@
 
 #include <array>
 
-template <typename T, std::size_t Size> class ReverseSortedArray {
+/*
+A fixed size array that maintains strictly decreasing sorted order
+*/
+template <typename T, std::size_t Size> class DecreasingSortedArray {
   private:
     std::array<T, Size> data;
     std::size_t count = 0; // Number of actual elements in the array
@@ -37,7 +40,8 @@ template <typename T, std::size_t Size> class ReverseSortedArray {
             --pos;
         }
 
-		// move range [pos, end) one position to the right to make space for new element
+        // move range [pos, end) one position to the right to make space for new
+        // element
         if (pos < count) [[likely]] {
             std::move_backward(data.begin() + pos, data.begin() + count,
                                data.begin() + count + 1);

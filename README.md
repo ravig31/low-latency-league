@@ -49,18 +49,19 @@ _prices.insert(order.side == Side::BUY
     :  static_cast<int16_t>(order.price));
 ```
 With the array sorted in strictly decreasing order:
-- Best ask (lowest positive) and best bid (most negative) **both end up at the back**
+- Best ask (lowest positive) and best bid (most negative) **both end up at the back** 
+  - less elements to move when inserting
 - Matching logic can treat "best" uniformly via `abs(_prices.back())`
 - Eliminates side‑specific comparison branches in hot path
-- Fits safely in `int16_t` given configured price domain (ensure benchmark constraints keep prices < 32768)
+- Negated price fits safely in `int16_t` given configured price domain (ensure benchmark constraints keep prices < 32768)
 
-Trade‑off: The performance increase is not all that signigicant, and there is a slight readability cost with this approach. Though, for the sake of pure optimisation I decided to include it anyway.
+Trade‑off: The performance increase is not all that significant, and there is a readability cost with this approach. Though, for the sake of pure optimisation I decided to include it anyway the main justification being that it avoid branching off into two different implementations for buy vs sell.
 
 ## Current Implementation
 
 
 Core components (SoA split):
-- Price ladder per side: `ReverseSortedArray<int16_t, MAX_NUM_PRICES>`
+- Price ladder per side: `DecreasingSortedArray<int16_t, MAX_NUM_PRICES>`
   - Stores negated BUY prices, positive SELL prices
   - Kept in (strict) decreasing order
   - Access to best price uses `back()` (smallest stored value) for both sides
@@ -77,7 +78,7 @@ Core components (SoA split):
 - Per‑price, per‑side volume: `std::array<VolumeType[2], MAX_NUM_PRICES>`
   - O(1) volume retrieval
 
-Why the `ReverseSortedArray`? 
+Why the `DecreasingSortedArray`? 
 
 
 - Fixed capacity avoids allocator calls
