@@ -75,7 +75,7 @@ inline __attribute__((always_inline, hot)) uint32_t process_orders(
         }
     }
 
-    if (order.quantity > 0) { [[likely]]
+    if (order.quantity > 0) {
         s_levels.add_order(order);
         volumes[order.price - BASE_PRICE][static_cast<size_t>(order.side)] +=
             order.quantity;
@@ -86,7 +86,7 @@ inline __attribute__((always_inline, hot)) uint32_t process_orders(
     return match_count;
 };
 
-uint32_t match_order(Orderbook &orderbook, const Order &incoming) noexcept {
+[[nodiscard]] uint32_t match_order(Orderbook &orderbook, const Order &incoming) noexcept  {
     uint32_t match_count = 0;
     Order order = incoming;
     const bool isSell = static_cast<bool>(order.side);
